@@ -1,5 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { n8nBaseUrl, webhooks } = require('../../config.json');
+const { createLogger } = require('../../src/utils/logger');
+
+const logger = createLogger('Register');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -54,7 +57,7 @@ module.exports = {
                 });
             }
         } catch (error) {
-            console.error('Registration error:', error);
+            logger.error('Registration error:', error);
             await interaction.editReply({
                 content: `❌ Error connecting to the registration service. Please try again later.\n\nError: ${error.message}`
             });

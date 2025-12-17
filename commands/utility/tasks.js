@@ -1,4 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { createLogger } = require('../../src/utils/logger');
+const { JIRA_STATUS, COLORS, STATUS_EMOJIS } = require('../../src/utils/constants');
+
+const logger = createLogger('Tasks');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -67,7 +71,7 @@ module.exports = {
             await interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
-            console.error('Error fetching tasks:', error);
+            logger.error('Error fetching tasks:', error);
             await interaction.editReply({
                 content: `⚠️ Error: ${error.message}`
             });
@@ -77,29 +81,29 @@ module.exports = {
 
 function getStatusEmoji(status) {
     const statusLower = status?.toLowerCase() || '';
-    if (statusLower.includes('done')) return '✅';
-    if (statusLower.includes('review')) return '🔍';
-    if (statusLower.includes('progress')) return '🔄';
-    if (statusLower.includes('to do')) return '📋';
-    return '📌';
+    if (statusLower.includes('done')) return STATUS_EMOJIS.DONE;
+    if (statusLower.includes('review')) return STATUS_EMOJIS.IN_REVIEW;
+    if (statusLower.includes('progress')) return STATUS_EMOJIS.IN_PROGRESS;
+    if (statusLower.includes('to do')) return STATUS_EMOJIS.TO_DO;
+    return STATUS_EMOJIS.DEFAULT;
 }
 
 function getStatusLabel(status) {
     switch (status) {
-        case 'todo': return 'To Do';
-        case 'inprogress': return 'In Progress';
-        case 'inreview': return 'In Review';
-        case 'done': return 'Done';
+        case 'todo': return JIRA_STATUS.TO_DO;
+        case 'inprogress': return JIRA_STATUS.IN_PROGRESS;
+        case 'inreview': return JIRA_STATUS.IN_REVIEW;
+        case 'done': return JIRA_STATUS.DONE;
         default: return status;
     }
 }
 
 function getStatusColor(status) {
     switch (status) {
-        case 'todo': return 0x3498db;      // Blue
-        case 'inprogress': return 0xf39c12; // Orange
-        case 'inreview': return 0x9b59b6;   // Purple
-        case 'done': return 0x2ecc71;       // Green
-        default: return 0x3498db;           // Blue (default)
+        case 'todo': return COLORS.TO_DO;
+        case 'inprogress': return COLORS.IN_PROGRESS;
+        case 'inreview': return COLORS.IN_REVIEW;
+        case 'done': return COLORS.DONE;
+        default: return COLORS.TO_DO;
     }
 }

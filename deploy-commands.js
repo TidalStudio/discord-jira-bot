@@ -2,6 +2,9 @@ require('dotenv').config();
 const { REST, Routes } = require('discord.js');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createLogger } = require('./src/utils/logger');
+
+const logger = createLogger('Deploy');
 
 const clientId = process.env.DISCORD_CLIENT_ID;
 const token = process.env.DISCORD_TOKEN;
@@ -16,7 +19,7 @@ for (const file of commandFiles) {
     if ('data' in command && 'execute' in command) {
         commands.push(command.data.toJSON());
     } else {
-        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        logger.warn(`The command at ${filePath} is missing a required "data" or "execute" property.`);
     }
 }
 
@@ -24,7 +27,7 @@ const rest = new REST().setToken(token);
 
 (async () => {
     try {
-        console.log(`Started refreshing ${commands.length} application (/) commands.`);
+        logger.info(`Started refreshing ${commands.length} application (/) commands.`);
 
         // Deploy globally (works in all servers the bot is in)
         const data = await rest.put(
@@ -32,10 +35,10 @@ const rest = new REST().setToken(token);
             { body: commands },
         );
 
-        console.log(`Successfully reloaded ${data.length} application (/) commands globally.`);
-        console.log('Commands deployed:');
-        data.forEach(cmd => console.log(`  - /${cmd.name}: ${cmd.description}`));
+        logger.info(`Successfully reloaded ${data.length} application (/) commands globally.`);
+        logger.info('Commands deployed:');
+        data.forEach(cmd => logger.info(`  - /${cmd.name}: ${cmd.description}`));
     } catch (error) {
-        console.error(error);
+        logger.error('Deployment error:', error);
     }
 })();

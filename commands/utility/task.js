@@ -1,4 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { createLogger } = require('../../src/utils/logger');
+const { JIRA_STATUS, COLORS, PATTERNS, TIMEOUTS, FORUM } = require('../../src/utils/constants');
+
+const logger = createLogger('Task');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -46,7 +50,7 @@ module.exports = {
         const ticketKey = interaction.options.getString('ticket').toUpperCase();
 
         // Validate ticket format
-        if (!/^[A-Z]+-\d+$/.test(ticketKey)) {
+        if (!PATTERNS.JIRA_TICKET.test(ticketKey)) {
             return interaction.reply({
                 content: '❌ Invalid ticket format. Use format like `KAN-123`.',
                 flags: 64
@@ -75,7 +79,7 @@ async function handleReview(interaction, client, config, ticketKey) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 jiraTicketKey: ticketKey,
-                targetStatus: 'In Review',
+                targetStatus: JIRA_STATUS.IN_REVIEW,
                 submittedBy: interaction.user.tag,
                 discordUserId: interaction.user.id
             })
@@ -101,9 +105,9 @@ async function handleReview(interaction, client, config, ticketKey) {
                         title: `📋 ${ticketKey}: ${result.summary || 'Task'}`,
                         url: `${config.jiraBaseUrl}/browse/${ticketKey}`,
                         description: `Submitted for review by <@${interaction.user.id}>`,
-                        color: 0xf39c12,
+                        color: COLORS.IN_REVIEW,
                         fields: [
-                            { name: 'Status', value: 'In Review', inline: true },
+                            { name: 'Status', value: JIRA_STATUS.IN_REVIEW, inline: true },
                             { name: 'Submitted By', value: interaction.user.tag, inline: true }
                         ],
                         footer: { text: 'React with ✅ to approve | React with ❌ to deny' },
@@ -131,7 +135,7 @@ async function handleReview(interaction, client, config, ticketKey) {
         });
 
     } catch (error) {
-        console.error('Error submitting for review:', error);
+        logger.error('Error submitting for review:', error);
         await interaction.editReply({
             content: `⚠️ Error: ${error.message}`
         });
@@ -154,7 +158,7 @@ async function handleDone(interaction, client, config, ticketKey) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 jiraTicketKey: ticketKey,
-                targetStatus: 'Done',
+                targetStatus: JIRA_STATUS.DONE,
                 approvedBy: interaction.user.tag
             })
         });
@@ -171,7 +175,7 @@ async function handleDone(interaction, client, config, ticketKey) {
 
         // Find the assignee's Discord user via their Jira email
         const assigneeEmail = result.assignee?.emailAddress;
-        console.log(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
+        logger.debug(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
         
         let discordUser = null;
         let discordUserId = null;
@@ -184,19 +188,19 @@ async function handleDone(interaction, client, config, ticketKey) {
                     body: JSON.stringify({ jiraEmail: assigneeEmail })
                 });
                 const lookupResult = await lookupResponse.json();
-                console.log(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
+                logger.debug(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
                 if (lookupResult.discordId) {
                     discordUserId = lookupResult.discordId;
                     discordUser = await guild.members.fetch(discordUserId).catch((e) => {
-                        console.log(`Could not fetch Discord member ${discordUserId}:`, e.message);
+                        logger.debug(`Could not fetch Discord member ${discordUserId}:`, e.message);
                         return null;
                     });
                 }
             } catch (e) {
-                console.log('Could not lookup Discord user from Jira email:', e.message);
+                logger.debug('Could not lookup Discord user from Jira email:', e.message);
             }
         } else {
-            console.log('No email address in assignee data');
+            logger.debug('No email address in assignee data');
         }
 
         // Delete the thread in the user's working tickets forum
@@ -208,7 +212,7 @@ async function handleDone(interaction, client, config, ticketKey) {
             // Primary method: Find forum by Discord username
             if (discordUser) {
                 const assigneeForumName = `tasks-${discordUser.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-                console.log(`Looking for forum by username: ${assigneeForumName}`);
+                logger.debug(`Looking for forum by username: ${assigneeForumName}`);
                 userForum = workingCategory.children?.cache.find(
                     ch => ch.name === assigneeForumName && ch.type === ChannelType.GuildForum
                 );
@@ -216,20 +220,20 @@ async function handleDone(interaction, client, config, ticketKey) {
             
             // Backup method: Find forum by permission overwrites (user has ViewChannel permission)
             if (!userForum && discordUserId) {
-                console.log(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
+                logger.debug(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
                 userForum = workingCategory.children?.cache.find(ch => {
                     if (ch.type !== ChannelType.GuildForum) return false;
                     const perms = ch.permissionOverwrites.cache.get(discordUserId);
                     return perms && perms.allow.has(PermissionFlagsBits.ViewChannel);
                 });
                 if (userForum) {
-                    console.log(`Found forum via permissions: ${userForum.name}`);
+                    logger.debug(`Found forum via permissions: ${userForum.name}`);
                 }
             }
             
             // Last resort: Search ALL forums in the category for a thread with this ticket key
             if (!userForum) {
-                console.log(`User lookup failed, searching all forums for ticket thread: ${ticketKey}`);
+                logger.debug(`User lookup failed, searching all forums for ticket thread: ${ticketKey}`);
                 const allForums = workingCategory.children?.cache.filter(ch => ch.type === ChannelType.GuildForum);
                 
                 for (const [, forum] of allForums) {
@@ -244,11 +248,11 @@ async function handleDone(interaction, client, config, ticketKey) {
                         
                         if (ticketThread) {
                             userForum = forum;
-                            console.log(`Found ticket thread in forum: ${forum.name}`);
+                            logger.debug(`Found ticket thread in forum: ${forum.name}`);
                             break;
                         }
                     } catch (e) {
-                        console.log(`Error searching forum ${forum.name}:`, e.message);
+                        logger.debug(`Error searching forum ${forum.name}:`, e.message);
                     }
                 }
             }
@@ -268,11 +272,11 @@ async function handleDone(interaction, client, config, ticketKey) {
                 setTimeout(async () => {
                     try {
                         await ticketThread.delete('Task completed - moved to completed tasks');
-                        console.log(`🗑️ Deleted working ticket thread for ${ticketKey}`);
+                        logger.info(`🗑️ Deleted working ticket thread for ${ticketKey}`);
                     } catch (e) {
-                        console.error('Could not delete working ticket thread:', e);
+                        logger.error('Could not delete working ticket thread:', e);
                     }
-                }, 2000);
+                }, TIMEOUTS.THREAD_DELETE_SHORT);
             }
         }
 
@@ -281,21 +285,21 @@ async function handleDone(interaction, client, config, ticketKey) {
         if (reviewForum && reviewForum.type === ChannelType.GuildForum) {
             const activeThreads = await reviewForum.threads.fetchActive();
             const archivedThreads = await reviewForum.threads.fetchArchived();
-            
+
             let reviewThread = activeThreads.threads.find(t => t.name.startsWith(ticketKey));
             if (!reviewThread) {
                 reviewThread = archivedThreads.threads.find(t => t.name.startsWith(ticketKey));
             }
-            
+
             if (reviewThread) {
                 setTimeout(async () => {
                     try {
                         await reviewThread.delete('Task approved - moved to completed tasks');
-                        console.log(`🗑️ Deleted review thread for ${ticketKey}`);
+                        logger.info(`🗑️ Deleted review thread for ${ticketKey}`);
                     } catch (e) {
-                        console.error('Could not delete review thread:', e);
+                        logger.error('Could not delete review thread:', e);
                     }
-                }, 2500);
+                }, TIMEOUTS.THREAD_DELETE_MEDIUM);
             }
         }
 
@@ -307,7 +311,7 @@ async function handleDone(interaction, client, config, ticketKey) {
         });
 
     } catch (error) {
-        console.error('Error marking done:', error);
+        logger.error('Error marking done:', error);
         await interaction.editReply({
             content: `⚠️ Error: ${error.message}`
         });
@@ -333,7 +337,7 @@ async function handleDeny(interaction, client, config, ticketKey) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 jiraTicketKey: ticketKey,
-                targetStatus: 'In Progress',
+                targetStatus: JIRA_STATUS.IN_PROGRESS,
                 deniedBy: interaction.user.tag
             })
         });
@@ -350,7 +354,7 @@ async function handleDeny(interaction, client, config, ticketKey) {
 
         // Find the assignee's Discord user via their Jira email
         const assigneeEmail = result.assignee?.emailAddress;
-        console.log(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
+        logger.debug(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
         
         let discordUser = null;
         let discordUserId = null;
@@ -363,19 +367,19 @@ async function handleDeny(interaction, client, config, ticketKey) {
                     body: JSON.stringify({ jiraEmail: assigneeEmail })
                 });
                 const lookupResult = await lookupResponse.json();
-                console.log(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
+                logger.debug(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
                 if (lookupResult.discordId) {
                     discordUserId = lookupResult.discordId;
                     discordUser = await guild.members.fetch(discordUserId).catch((e) => {
-                        console.log(`Could not fetch Discord member ${discordUserId}:`, e.message);
+                        logger.debug(`Could not fetch Discord member ${discordUserId}:`, e.message);
                         return null;
                     });
                 }
             } catch (e) {
-                console.log('Could not lookup Discord user from Jira email:', e.message);
+                logger.debug('Could not lookup Discord user from Jira email:', e.message);
             }
         } else {
-            console.log('No email address in assignee data');
+            logger.debug('No email address in assignee data');
         }
 
         // Delete any review threads for this ticket (result is pushed to working thread)
@@ -393,11 +397,11 @@ async function handleDeny(interaction, client, config, ticketKey) {
                 setTimeout(async () => {
                     try {
                         await reviewThread.delete('Review denied - feedback sent to working thread');
-                        console.log(`🗑️ Deleted review thread for ${ticketKey} (denied)`);
+                        logger.info(`🗑️ Deleted review thread for ${ticketKey} (denied)`);
                     } catch (e) {
-                        console.error('Could not delete review thread:', e);
+                        logger.error('Could not delete review thread:', e);
                     }
-                }, 2000);
+                }, TIMEOUTS.THREAD_DELETE_SHORT);
             }
         }
 
@@ -410,7 +414,7 @@ async function handleDeny(interaction, client, config, ticketKey) {
             // Primary method: Find forum by Discord username
             if (discordUser) {
                 const assigneeForumName = `tasks-${discordUser.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-                console.log(`Looking for forum by username: ${assigneeForumName}`);
+                logger.debug(`Looking for forum by username: ${assigneeForumName}`);
                 userForum = workingCategory.children?.cache.find(
                     ch => ch.name === assigneeForumName && ch.type === ChannelType.GuildForum
                 );
@@ -418,20 +422,20 @@ async function handleDeny(interaction, client, config, ticketKey) {
             
             // Backup method: Find forum by permission overwrites (user has ViewChannel permission)
             if (!userForum && discordUserId) {
-                console.log(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
+                logger.debug(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
                 userForum = workingCategory.children?.cache.find(ch => {
                     if (ch.type !== ChannelType.GuildForum) return false;
                     const perms = ch.permissionOverwrites.cache.get(discordUserId);
                     return perms && perms.allow.has(PermissionFlagsBits.ViewChannel);
                 });
                 if (userForum) {
-                    console.log(`Found forum via permissions: ${userForum.name}`);
+                    logger.debug(`Found forum via permissions: ${userForum.name}`);
                 }
             }
             
             // Last resort: Search ALL forums in the category for a thread with this ticket key
             if (!userForum) {
-                console.log(`User lookup failed, searching all forums for ticket thread: ${ticketKey}`);
+                logger.debug(`User lookup failed, searching all forums for ticket thread: ${ticketKey}`);
                 const allForums = workingCategory.children?.cache.filter(ch => ch.type === ChannelType.GuildForum);
                 
                 for (const [, forum] of allForums) {
@@ -446,11 +450,11 @@ async function handleDeny(interaction, client, config, ticketKey) {
                         
                         if (ticketThread) {
                             userForum = forum;
-                            console.log(`Found ticket thread in forum: ${forum.name}`);
+                            logger.debug(`Found ticket thread in forum: ${forum.name}`);
                             break;
                         }
                     } catch (e) {
-                        console.log(`Error searching forum ${forum.name}:`, e.message);
+                        logger.debug(`Error searching forum ${forum.name}:`, e.message);
                     }
                 }
             }
@@ -476,7 +480,7 @@ async function handleDeny(interaction, client, config, ticketKey) {
                 await ticketThread.send({
                     content: `${assigneePing}⚠️ **Review Denied** by <@${interaction.user.id}>.\n**Reason:** ${reason}\n\nPlease address the feedback and use \`/task review ${ticketKey}\` when ready to resubmit.`
                 });
-                console.log(`Posted denial message to working thread for ${ticketKey}`);
+                logger.debug(`Posted denial message to working thread for ${ticketKey}`);
             }
         }
 
@@ -485,7 +489,7 @@ async function handleDeny(interaction, client, config, ticketKey) {
         });
 
     } catch (error) {
-        console.error('Error denying ticket:', error);
+        logger.error('Error denying ticket:', error);
         await interaction.editReply({
             content: `⚠️ Error: ${error.message}`
         });
@@ -494,12 +498,12 @@ async function handleDeny(interaction, client, config, ticketKey) {
 
 async function createCompletedTaskThread(guild, config, ticketKey, ticketInfo, approver) {
     try {
-        console.log(`Creating completed task thread for ${ticketKey}...`);
-        
+        logger.debug(`Creating completed task thread for ${ticketKey}...`);
+
         const assigneeName = ticketInfo.assignee?.displayName || ticketInfo.assignee?.name || 'Unassigned';
         const forumName = `tasks-${assigneeName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-        
-        console.log(`Assignee: ${assigneeName}, Forum name: ${forumName}`);
+
+        logger.debug(`Assignee: ${assigneeName}, Forum name: ${forumName}`);
 
         // Look for existing forum channel in the completed tasks category (same pattern as working tickets)
         const completedCategory = guild.channels.cache.get(config.categories.completedTasks);
@@ -513,35 +517,35 @@ async function createCompletedTaskThread(guild, config, ticketKey, ticketInfo, a
 
         // Create forum if doesn't exist (same pattern as working tickets)
         if (!userForum) {
-            console.log(`Forum ${forumName} not found in completed tasks, creating...`);
+            logger.debug(`Forum ${forumName} not found in completed tasks, creating...`);
             try {
                 userForum = await guild.channels.create({
                     name: forumName,
                     type: ChannelType.GuildForum,
-                    parent: config.categories.completedTasks, // Use config ID directly like working tickets
+                    parent: config.categories.completedTasks,
                     topic: `Completed tasks for ${assigneeName}`,
-                    defaultAutoArchiveDuration: 10080 // 7 days
+                    defaultAutoArchiveDuration: FORUM.AUTO_ARCHIVE_DURATION
                 });
-                console.log(`✅ Created completed tasks forum: ${forumName} (ID: ${userForum.id})`);
+                logger.info(`✅ Created completed tasks forum: ${forumName} (ID: ${userForum.id})`);
             } catch (error) {
-                console.error('Error creating completed tasks forum:', error);
+                logger.error('Error creating completed tasks forum:', error);
                 return;
             }
         } else {
-            console.log(`Found existing completed tasks forum: ${forumName}`);
+            logger.debug(`Found existing completed tasks forum: ${forumName}`);
         }
 
         // Create thread for the completed task
-        const thread = await userForum.threads.create({
+        await userForum.threads.create({
             name: `✅ ${ticketKey}: ${ticketInfo.summary || 'Completed Task'}`,
             message: {
                 embeds: [{
                     title: `✅ ${ticketKey}: ${ticketInfo.summary || 'Task'}`,
                     url: `${config.jiraBaseUrl}/browse/${ticketKey}`,
                     description: `Task completed and approved!`,
-                    color: 0x2ecc71, // Green
+                    color: COLORS.DONE,
                     fields: [
-                        { name: 'Status', value: 'Done', inline: true },
+                        { name: 'Status', value: JIRA_STATUS.DONE, inline: true },
                         { name: 'Completed By', value: assigneeName, inline: true },
                         { name: 'Approved By', value: approver.tag, inline: true }
                     ],
@@ -551,10 +555,10 @@ async function createCompletedTaskThread(guild, config, ticketKey, ticketInfo, a
             }
         });
 
-        console.log(`✅ Created completed task thread for ${ticketKey} in ${forumName}`);
+        logger.info(`✅ Created completed task thread for ${ticketKey} in ${forumName}`);
     } catch (error) {
-        console.error('Error creating completed task thread:', error);
-        console.error('Error stack:', error.stack);
+        logger.error('Error creating completed task thread:', error);
+        logger.error('Error stack:', error.stack);
     }
 }
 
@@ -594,25 +598,25 @@ async function handleQuit(interaction, client, config, ticketKey) {
                 const ticketThread = threads.threads.find(t => t.name.startsWith(ticketKey));
                 if (ticketThread) {
                     await ticketThread.send({
-                        content: `🚪 Task unassigned by <@${interaction.user.id}>. Ticket moved back to **To Do**.`
+                        content: `🚪 Task unassigned by <@${interaction.user.id}>. Ticket moved back to **${JIRA_STATUS.TO_DO}**.`
                     });
                     setTimeout(async () => {
                         try {
                             await ticketThread.setArchived(true);
                         } catch (e) {
-                            console.error('Could not archive thread:', e);
+                            logger.error('Could not archive thread:', e);
                         }
-                    }, 2000);
+                    }, TIMEOUTS.THREAD_DELETE_SHORT);
                 }
             }
         }
 
         await interaction.editReply({
-            content: `🚪 You've been unassigned from **${ticketKey}**. The ticket has been moved back to **To Do**.`
+            content: `🚪 You've been unassigned from **${ticketKey}**. The ticket has been moved back to **${JIRA_STATUS.TO_DO}**.`
         });
 
     } catch (error) {
-        console.error('Error quitting ticket:', error);
+        logger.error('Error quitting ticket:', error);
         await interaction.editReply({
             content: `⚠️ Error: ${error.message}`
         });

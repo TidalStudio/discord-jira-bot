@@ -1,5 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { n8nBaseUrl, webhooks } = require('../../config.json');
+const { createLogger } = require('../../src/utils/logger');
+
+const logger = createLogger('Whoami');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -35,7 +38,7 @@ module.exports = {
                 });
             }
         } catch (error) {
-            console.error('Lookup error:', error);
+            logger.error('Lookup error:', error);
             await interaction.editReply({
                 content: `❌ Error checking registration. Please try again later.\n\nError: ${error.message}`
             });

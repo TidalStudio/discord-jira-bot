@@ -1,6 +1,10 @@
 require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
+const { createLogger } = require('./src/utils/logger');
+const { EMOJIS, JIRA_STATUS, COLORS, TIMEOUTS, PATTERNS, FORUM } = require('./src/utils/constants');
+
+const logger = createLogger('Bot');
 const {
     Client,
     Collection,
@@ -63,7 +67,7 @@ for (const file of commandFiles) {
     if ('data' in command && 'execute' in command) {
         client.commands.set(command.data.name, command);
     } else {
-        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        logger.warn(`The command at ${filePath} is missing a required "data" or "execute" property.`);
     }
 }
 
@@ -72,14 +76,14 @@ const ticketThreadMap = new Map();
 
 // Ready event
 client.once(Events.ClientReady, readyClient => {
-    console.log(`✅ Discord bot ready! Logged in as ${readyClient.user.tag}`);
-    console.log(`🔗 Connected to n8n at: ${config.n8nBaseUrl}`);
-    console.log(`📁 Forum channels configured:`);
-    console.log(`   Code: ${config.channels.codeUnassigned}`);
-    console.log(`   Art: ${config.channels.artUnassigned}`);
-    console.log(`   Audio: ${config.channels.audioUnassigned}`);
-    console.log(`   Review: ${config.channels.tasksForReview}`);
-    console.log(`   Working Tickets Category: ${config.categories.workingTickets}`);
+    logger.info(`✅ Discord bot ready! Logged in as ${readyClient.user.tag}`);
+    logger.info(`🔗 Connected to n8n at: ${config.n8nBaseUrl}`);
+    logger.info(`📁 Forum channels configured:`);
+    logger.debug(`   Code: ${config.channels.codeUnassigned}`);
+    logger.debug(`   Art: ${config.channels.artUnassigned}`);
+    logger.debug(`   Audio: ${config.channels.audioUnassigned}`);
+    logger.debug(`   Review: ${config.channels.tasksForReview}`);
+    logger.debug(`   Working Tickets Category: ${config.categories.workingTickets}`);
 });
 
 // Handle slash commands
@@ -89,14 +93,14 @@ client.on(Events.InteractionCreate, async interaction => {
     const command = interaction.client.commands.get(interaction.commandName);
 
     if (!command) {
-        console.error(`No command matching ${interaction.commandName} was found.`);
+        logger.error(`No command matching ${interaction.commandName} was found.`);
         return;
     }
 
     try {
         await command.execute(interaction, client, config);
     } catch (error) {
-        console.error(error);
+        logger.error('Command execution error:', error);
         const errorMessage = { content: 'There was an error while executing this command!', flags: 64 };
         if (interaction.replied || interaction.deferred) {
             await interaction.followUp(errorMessage);
@@ -116,18 +120,16 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
         try {
             await reaction.fetch();
         } catch (error) {
-            console.error('Error fetching reaction:', error);
+            logger.error('Error fetching reaction:', error);
             return;
         }
     }
 
     // Check if it's a checkmark or X emoji
-    const checkmarkEmojis = ['✅', '☑️', '✔️', 'white_check_mark', 'ballot_box_with_check', 'heavy_check_mark'];
-    const denyEmojis = ['❌', '✖️', '🚫', 'x', 'cross_mark', 'negative_squared_cross_mark'];
     const emojiName = reaction.emoji.name;
-    
-    const isCheckmark = checkmarkEmojis.includes(emojiName);
-    const isDeny = denyEmojis.includes(emojiName);
+
+    const isCheckmark = EMOJIS.CHECKMARKS.includes(emojiName);
+    const isDeny = EMOJIS.DENY.includes(emojiName);
     
     if (!isCheckmark && !isDeny) return;
 
@@ -145,7 +147,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     let jiraTicketKey = null;
     
     // Try thread name first (format: "KAN-123: Title")
-    const threadNameMatch = channel.name.match(/([A-Z]+-\d+)/);
+    const threadNameMatch = channel.name.match(PATTERNS.JIRA_TICKET_EXTRACT);
     if (threadNameMatch) {
         jiraTicketKey = threadNameMatch[1];
     }
@@ -153,7 +155,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     // Also check message embeds and content
     if (!jiraTicketKey && message.embeds && message.embeds.length > 0) {
         for (const embed of message.embeds) {
-            const titleMatch = embed.title?.match(/([A-Z]+-\d+)/);
+            const titleMatch = embed.title?.match(PATTERNS.JIRA_TICKET_EXTRACT);
             const urlMatch = embed.url?.match(/browse\/([A-Z]+-\d+)/);
             if (titleMatch) jiraTicketKey = titleMatch[1];
             else if (urlMatch) jiraTicketKey = urlMatch[1];
@@ -162,7 +164,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     }
 
     if (!jiraTicketKey) {
-        console.log('No Jira ticket found in thread/message');
+        logger.debug('No Jira ticket found in thread/message');
         return;
     }
 
@@ -189,7 +191,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 
 // Handle claiming a ticket from unassigned forum
 async function handleClaimTicket(reaction, user, jiraTicketKey, thread) {
-    console.log(`✅ User ${user.tag} claiming ticket ${jiraTicketKey}`);
+    logger.info(`✅ User ${user.tag} claiming ticket ${jiraTicketKey}`);
 
     try {
         const response = await fetch(`${config.n8nBaseUrl}${config.webhooks.assignTicket}`, {
@@ -228,19 +230,19 @@ async function handleClaimTicket(reaction, user, jiraTicketKey, thread) {
             setTimeout(async () => {
                 try {
                     await thread.delete('Ticket claimed - moved to working tickets');
-                    console.log(`🗑️ Deleted unassigned thread for ${jiraTicketKey}`);
+                    logger.info(`🗑️ Deleted unassigned thread for ${jiraTicketKey}`);
                 } catch (e) {
-                    console.error('Could not delete unassigned thread:', e);
+                    logger.error('Could not delete unassigned thread:', e);
                     // Fallback to archive if delete fails
                     try {
                         await thread.setArchived(true);
                     } catch (e2) {
-                        console.error('Could not archive thread either:', e2);
+                        logger.error('Could not archive thread either:', e2);
                     }
                 }
-            }, 3000);
+            }, TIMEOUTS.THREAD_DELETE_LONG);
 
-            console.log(`✅ Ticket ${jiraTicketKey} claimed by ${user.tag}`);
+            logger.info(`✅ Ticket ${jiraTicketKey} claimed by ${user.tag}`);
         } else {
             await thread.send({
                 content: `❌ <@${user.id}> Could not claim ticket: ${result.error || 'Unknown error'}. Make sure you've registered with \`/register\`.`,
@@ -248,7 +250,7 @@ async function handleClaimTicket(reaction, user, jiraTicketKey, thread) {
             });
         }
     } catch (error) {
-        console.error('Error claiming ticket:', error);
+        logger.error('Error claiming ticket:', error);
         await thread.send({
             content: `⚠️ <@${user.id}> Error processing claim: ${error.message}`,
             allowedMentions: { users: [user.id] }
@@ -270,7 +272,7 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
         return;
     }
 
-    console.log(`✅ PM ${user.tag} approving ticket ${jiraTicketKey}`);
+    logger.info(`✅ PM ${user.tag} approving ticket ${jiraTicketKey}`);
 
     try {
         const response = await fetch(`${config.n8nBaseUrl}${config.webhooks.moveTicket}`, {
@@ -278,7 +280,7 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 jiraTicketKey: jiraTicketKey,
-                targetStatus: 'Done',
+                targetStatus: JIRA_STATUS.DONE,
                 approvedBy: user.tag
             })
         });
@@ -293,7 +295,7 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
 
             // Find the assignee's Discord user via their Jira email
             const assigneeEmail = result.assignee?.emailAddress;
-            console.log(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
+            logger.debug(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
             
             let discordUser = null;
             let discordUserId = null;
@@ -306,19 +308,19 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
                         body: JSON.stringify({ jiraEmail: assigneeEmail })
                     });
                     const lookupResult = await lookupResponse.json();
-                    console.log(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
+                    logger.debug(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
                     if (lookupResult.discordId) {
                         discordUserId = lookupResult.discordId;
                         discordUser = await guild.members.fetch(discordUserId).catch((e) => {
-                            console.log(`Could not fetch Discord member ${discordUserId}:`, e.message);
+                            logger.debug(`Could not fetch Discord member ${discordUserId}:`, e.message);
                             return null;
                         });
                     }
                 } catch (e) {
-                    console.log('Could not lookup Discord user from Jira email:', e.message);
+                    logger.debug('Could not lookup Discord user from Jira email:', e.message);
                 }
             } else {
-                console.log('No email address in assignee data');
+                logger.debug('No email address in assignee data');
             }
             
             const workingCategory = guild.channels.cache.get(config.categories.workingTickets);
@@ -329,7 +331,7 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
                 // Primary method: Find forum by Discord username
                 if (discordUser) {
                     const assigneeForumName = `tasks-${discordUser.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-                    console.log(`Looking for forum by username: ${assigneeForumName}`);
+                    logger.debug(`Looking for forum by username: ${assigneeForumName}`);
                     userForum = workingCategory.children?.cache.find(
                         ch => ch.name === assigneeForumName && ch.type === ChannelType.GuildForum
                     );
@@ -337,20 +339,20 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
                 
                 // Backup method: Find forum by permission overwrites (user has ViewChannel permission)
                 if (!userForum && discordUserId) {
-                    console.log(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
+                    logger.debug(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
                     userForum = workingCategory.children?.cache.find(ch => {
                         if (ch.type !== ChannelType.GuildForum) return false;
                         const perms = ch.permissionOverwrites.cache.get(discordUserId);
                         return perms && perms.allow.has(PermissionFlagsBits.ViewChannel);
                     });
                     if (userForum) {
-                        console.log(`Found forum via permissions: ${userForum.name}`);
+                        logger.debug(`Found forum via permissions: ${userForum.name}`);
                     }
                 }
                 
                 // Last resort: Search ALL forums in the category for a thread with this ticket key
                 if (!userForum) {
-                    console.log(`User lookup failed, searching all forums for ticket thread: ${jiraTicketKey}`);
+                    logger.debug(`User lookup failed, searching all forums for ticket thread: ${jiraTicketKey}`);
                     const allForums = workingCategory.children?.cache.filter(ch => ch.type === ChannelType.GuildForum);
                     
                     for (const [, forum] of allForums) {
@@ -365,11 +367,11 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
                             
                             if (ticketThread) {
                                 userForum = forum;
-                                console.log(`Found ticket thread in forum: ${forum.name}`);
+                                logger.debug(`Found ticket thread in forum: ${forum.name}`);
                                 break;
                             }
                         } catch (e) {
-                            console.log(`Error searching forum ${forum.name}:`, e.message);
+                            logger.debug(`Error searching forum ${forum.name}:`, e.message);
                         }
                     }
                 }
@@ -389,11 +391,11 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
                     setTimeout(async () => {
                         try {
                             await ticketThread.delete('Task completed - moved to completed tasks');
-                            console.log(`🗑️ Deleted working ticket thread for ${jiraTicketKey}`);
+                            logger.info(`🗑️ Deleted working ticket thread for ${jiraTicketKey}`);
                         } catch (e) {
-                            console.error('Could not delete working ticket thread:', e);
+                            logger.error('Could not delete working ticket thread:', e);
                         }
-                    }, 2000);
+                    }, TIMEOUTS.THREAD_DELETE_SHORT);
                 }
             }
 
@@ -404,18 +406,18 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
             setTimeout(async () => {
                 try {
                     await thread.delete('Task approved - moved to completed tasks');
-                    console.log(`🗑️ Deleted review thread for ${jiraTicketKey}`);
+                    logger.info(`🗑️ Deleted review thread for ${jiraTicketKey}`);
                 } catch (e) {
-                    console.error('Could not delete review thread:', e);
+                    logger.error('Could not delete review thread:', e);
                 }
-            }, 3000);
+            }, TIMEOUTS.THREAD_DELETE_LONG);
         } else {
             await thread.send({
                 content: `❌ Could not approve ticket: ${result.error || 'Unknown error'}`,
             });
         }
     } catch (error) {
-        console.error('Error approving ticket:', error);
+        logger.error('Error approving ticket:', error);
         await thread.send({ content: `⚠️ Error: ${error.message}` });
     }
 }
@@ -434,7 +436,7 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
         return;
     }
 
-    console.log(`❌ PM ${user.tag} denying ticket ${jiraTicketKey}`);
+    logger.info(`❌ PM ${user.tag} denying ticket ${jiraTicketKey}`);
 
     try {
         // Move ticket back to In Progress
@@ -443,7 +445,7 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 jiraTicketKey: jiraTicketKey,
-                targetStatus: 'In Progress',
+                targetStatus: JIRA_STATUS.IN_PROGRESS,
                 deniedBy: user.tag
             })
         });
@@ -453,7 +455,7 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
         if (result.success) {
             // Find the assignee's Discord user via their Jira email
             const assigneeEmail = result.assignee?.emailAddress;
-            console.log(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
+            logger.debug(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
             
             let discordUser = null;
             let discordUserId = null;
@@ -467,19 +469,19 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
                         body: JSON.stringify({ jiraEmail: assigneeEmail })
                     });
                     const lookupResult = await lookupResponse.json();
-                    console.log(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
+                    logger.debug(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
                     if (lookupResult.discordId) {
                         discordUserId = lookupResult.discordId;
                         discordUser = await guild.members.fetch(discordUserId).catch((e) => {
-                            console.log(`Could not fetch Discord member ${discordUserId}:`, e.message);
+                            logger.debug(`Could not fetch Discord member ${discordUserId}:`, e.message);
                             return null;
                         });
                     }
                 } catch (e) {
-                    console.log('Could not lookup Discord user from Jira email:', e.message);
+                    logger.debug('Could not lookup Discord user from Jira email:', e.message);
                 }
             } else {
-                console.log('No email address in assignee data');
+                logger.debug('No email address in assignee data');
             }
             
             const workingCategory = guild.channels.cache.get(config.categories.workingTickets);
@@ -490,7 +492,7 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
                 // Primary method: Find forum by Discord username
                 if (discordUser) {
                     const assigneeForumName = `tasks-${discordUser.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-                    console.log(`Looking for forum by username: ${assigneeForumName}`);
+                    logger.debug(`Looking for forum by username: ${assigneeForumName}`);
                     userForum = workingCategory.children?.cache.find(
                         ch => ch.name === assigneeForumName && ch.type === ChannelType.GuildForum
                     );
@@ -498,20 +500,20 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
                 
                 // Backup method: Find forum by permission overwrites (user has ViewChannel permission)
                 if (!userForum && discordUserId) {
-                    console.log(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
+                    logger.debug(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
                     userForum = workingCategory.children?.cache.find(ch => {
                         if (ch.type !== ChannelType.GuildForum) return false;
                         const perms = ch.permissionOverwrites.cache.get(discordUserId);
                         return perms && perms.allow.has(PermissionFlagsBits.ViewChannel);
                     });
                     if (userForum) {
-                        console.log(`Found forum via permissions: ${userForum.name}`);
+                        logger.debug(`Found forum via permissions: ${userForum.name}`);
                     }
                 }
                 
                 // Last resort: Search ALL forums in the category for a thread with this ticket key
                 if (!userForum) {
-                    console.log(`User lookup failed, searching all forums for ticket thread: ${jiraTicketKey}`);
+                    logger.debug(`User lookup failed, searching all forums for ticket thread: ${jiraTicketKey}`);
                     const allForums = workingCategory.children?.cache.filter(ch => ch.type === ChannelType.GuildForum);
                     
                     for (const [, forum] of allForums) {
@@ -526,17 +528,17 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
                             
                             if (ticketThread) {
                                 userForum = forum;
-                                console.log(`Found ticket thread in forum: ${forum.name}`);
+                                logger.debug(`Found ticket thread in forum: ${forum.name}`);
                                 break;
                             }
                         } catch (e) {
-                            console.log(`Error searching forum ${forum.name}:`, e.message);
+                            logger.debug(`Error searching forum ${forum.name}:`, e.message);
                         }
                     }
                 }
                 
                 if (userForum) {
-                    console.log(`Found working forum: ${userForum.name}`);
+                    logger.debug(`Found working forum: ${userForum.name}`);
                     
                     // If we didn't already find the thread in the last-resort search, find it now
                     if (!ticketThread) {
@@ -550,7 +552,7 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
                     }
                     
                     if (ticketThread) {
-                        console.log(`Found ticket thread: ${ticketThread.name}`);
+                        logger.debug(`Found ticket thread: ${ticketThread.name}`);
                         // Unarchive if needed
                         if (ticketThread.archived) {
                             await ticketThread.setArchived(false);
@@ -561,33 +563,33 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
                         await ticketThread.send({
                             content: `${assigneePing}⚠️ **Review Denied** by <@${user.id}>.\n\n**Reason:** Please review feedback in the review thread or contact the PM for details.\n\nYour task has been sent back to **In Progress**. Use \`/task review ${jiraTicketKey}\` when ready to resubmit.`
                         });
-                        console.log(`Posted denial message to working thread for ${jiraTicketKey}`);
+                        logger.debug(`Posted denial message to working thread for ${jiraTicketKey}`);
                     } else {
-                        console.log(`Could not find ticket thread starting with ${jiraTicketKey}`);
+                        logger.debug(`Could not find ticket thread starting with ${jiraTicketKey}`);
                     }
                 } else {
-                    console.log(`Could not find working forum for user`);
+                    logger.debug(`Could not find working forum for user`);
                 }
             } else {
-                console.log(`Could not find working category: ${config.categories.workingTickets}`);
+                logger.debug(`Could not find working category: ${config.categories.workingTickets}`);
             }
 
             // Delete the review thread (result is pushed to working thread)
             setTimeout(async () => {
                 try {
                     await thread.delete('Review denied - feedback sent to working thread');
-                    console.log(`🗑️ Deleted review thread for ${jiraTicketKey} (denied)`);
+                    logger.info(`🗑️ Deleted review thread for ${jiraTicketKey} (denied)`);
                 } catch (e) {
-                    console.error('Could not delete review thread:', e);
+                    logger.error('Could not delete review thread:', e);
                 }
-            }, 2000);
+            }, TIMEOUTS.THREAD_DELETE_SHORT);
         } else {
             await thread.send({
                 content: `❌ Could not deny ticket: ${result.error || 'Unknown error'}`,
             });
         }
     } catch (error) {
-        console.error('Error denying ticket:', error);
+        logger.error('Error denying ticket:', error);
         await thread.send({ content: `⚠️ Error: ${error.message}` });
     }
 }
@@ -634,9 +636,9 @@ async function createOrUpdateUserTaskForum(user, ticketKey, ticketTitle, descrip
                 ]
             });
 
-            console.log(`📁 Created private task forum for ${user.tag}`);
+            logger.info(`📁 Created private task forum for ${user.tag}`);
         } catch (error) {
-            console.error('Error creating task forum:', error);
+            logger.error('Error creating task forum:', error);
             return;
         }
     }
@@ -647,7 +649,7 @@ async function createOrUpdateUserTaskForum(user, ticketKey, ticketTitle, descrip
         
         // Build embed fields matching unassigned forum format
         const embedFields = [
-            { name: 'Status', value: 'In Progress', inline: true },
+            { name: 'Status', value: JIRA_STATUS.IN_PROGRESS, inline: true },
             { name: 'Priority', value: priority || 'None', inline: true },
             { name: 'Assigned To', value: `<@${user.id}>`, inline: true }
         ];
@@ -665,7 +667,7 @@ async function createOrUpdateUserTaskForum(user, ticketKey, ticketTitle, descrip
                 embeds: [{
                     title: `${ticketKey}: ${cleanTitle}`,
                     url: `${config.jiraBaseUrl}/browse/${ticketKey}`,
-                    color: 0x00ff00, // Green for in progress
+                    color: COLORS.SUCCESS,
                     fields: embedFields,
                     footer: { text: 'Use /task review to submit for PM review' },
                     timestamp: new Date().toISOString()
@@ -686,9 +688,9 @@ async function createOrUpdateUserTaskForum(user, ticketKey, ticketTitle, descrip
         
         await thread.send({ content: descriptionText });
 
-        console.log(`📝 Created task thread ${ticketKey} for ${user.tag}`);
+        logger.info(`📝 Created task thread ${ticketKey} for ${user.tag}`);
     } catch (error) {
-        console.error('Error creating task thread:', error);
+        logger.error('Error creating task thread:', error);
     }
 }
 
@@ -785,12 +787,12 @@ function parseAdfToText(adf) {
 // Create a completed task thread in the Completed Tasks category
 async function createCompletedTaskThread(guild, ticketKey, ticketInfo, approver) {
     try {
-        console.log(`Creating completed task thread for ${ticketKey}...`);
-        
+        logger.debug(`Creating completed task thread for ${ticketKey}...`);
+
         const assigneeName = ticketInfo.assignee?.displayName || ticketInfo.assignee?.name || 'Unassigned';
         const forumName = `tasks-${assigneeName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-        
-        console.log(`Assignee: ${assigneeName}, Forum name: ${forumName}`);
+
+        logger.debug(`Assignee: ${assigneeName}, Forum name: ${forumName}`);
 
         // Look for existing forum channel in the completed tasks category
         const completedCategory = guild.channels.cache.get(config.categories.completedTasks);
@@ -804,22 +806,22 @@ async function createCompletedTaskThread(guild, ticketKey, ticketInfo, approver)
 
         // Create forum if doesn't exist
         if (!userForum) {
-            console.log(`Forum ${forumName} not found in completed tasks, creating...`);
+            logger.debug(`Forum ${forumName} not found in completed tasks, creating...`);
             try {
                 userForum = await guild.channels.create({
                     name: forumName,
                     type: ChannelType.GuildForum,
                     parent: config.categories.completedTasks,
                     topic: `Completed tasks for ${assigneeName}`,
-                    defaultAutoArchiveDuration: 10080 // 7 days
+                    defaultAutoArchiveDuration: FORUM.AUTO_ARCHIVE_DURATION
                 });
-                console.log(`✅ Created completed tasks forum: ${forumName} (ID: ${userForum.id})`);
+                logger.info(`✅ Created completed tasks forum: ${forumName} (ID: ${userForum.id})`);
             } catch (error) {
-                console.error('Error creating completed tasks forum:', error);
+                logger.error('Error creating completed tasks forum:', error);
                 return;
             }
         } else {
-            console.log(`Found existing completed tasks forum: ${forumName}`);
+            logger.debug(`Found existing completed tasks forum: ${forumName}`);
         }
 
         // Create thread for the completed task
@@ -830,9 +832,9 @@ async function createCompletedTaskThread(guild, ticketKey, ticketInfo, approver)
                     title: `✅ ${ticketKey}: ${ticketInfo.summary || 'Task'}`,
                     url: `${config.jiraBaseUrl}/browse/${ticketKey}`,
                     description: `Task completed and approved!`,
-                    color: 0x2ecc71, // Green
+                    color: COLORS.DONE,
                     fields: [
-                        { name: 'Status', value: 'Done', inline: true },
+                        { name: 'Status', value: JIRA_STATUS.DONE, inline: true },
                         { name: 'Completed By', value: assigneeName, inline: true },
                         { name: 'Approved By', value: approver.tag, inline: true }
                     ],
@@ -842,10 +844,10 @@ async function createCompletedTaskThread(guild, ticketKey, ticketInfo, approver)
             }
         });
 
-        console.log(`✅ Created completed task thread for ${ticketKey} in ${forumName}`);
+        logger.info(`✅ Created completed task thread for ${ticketKey} in ${forumName}`);
     } catch (error) {
-        console.error('Error creating completed task thread:', error);
-        console.error('Error stack:', error.stack);
+        logger.error('Error creating completed task thread:', error);
+        logger.error('Error stack:', error.stack);
     }
 }
 
