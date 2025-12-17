@@ -1,10 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { createLogger } = require('../../src/utils/logger');
-const { JIRA_STATUS, COLORS, TIMEOUTS } = require('../../src/utils/constants');
 const { isValidTicketKey } = require('../../src/utils/validators');
-const userLookupService = require('../../src/services/userLookupService');
-const threadService = require('../../src/services/threadService');
-const forumService = require('../../src/services/forumService');
+const taskManagementService = require('../../src/services/taskManagementService');
 
 const logger = createLogger('Task');
 
@@ -49,11 +46,10 @@ module.exports = {
                         .setDescription('Jira ticket key (e.g., KAN-123)')
                         .setRequired(true))),
 
-    async execute(interaction, client, config) {
+    async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
         const ticketKey = interaction.options.getString('ticket').toUpperCase();
 
-        // Validate ticket format
         if (!isValidTicketKey(ticketKey)) {
             return interaction.reply({
                 content: '❌ Invalid ticket format. Use format like `KAN-123`.',
@@ -63,187 +59,78 @@ module.exports = {
 
         await interaction.deferReply({ flags: 64 });
 
-        if (subcommand === 'review') {
-            await handleReview(interaction, client, config, ticketKey);
-        } else if (subcommand === 'done') {
-            await handleDone(interaction, client, config, ticketKey);
-        } else if (subcommand === 'deny') {
-            await handleDeny(interaction, client, config, ticketKey);
-        } else if (subcommand === 'quit') {
-            await handleQuit(interaction, client, config, ticketKey);
+        try {
+            switch (subcommand) {
+                case 'review':
+                    await handleReview(interaction, ticketKey);
+                    break;
+                case 'done':
+                    await handleDone(interaction, ticketKey);
+                    break;
+                case 'deny':
+                    await handleDeny(interaction, ticketKey);
+                    break;
+                case 'quit':
+                    await handleQuit(interaction, ticketKey);
+                    break;
+            }
+        } catch (error) {
+            logger.error(`Error in task ${subcommand}:`, error);
+            await interaction.editReply({
+                content: `⚠️ Error: ${error.message}`
+            });
         }
     }
 };
 
-async function handleReview(interaction, client, config, ticketKey) {
-    try {
-        // Move ticket to In Review in Jira
-        const response = await fetch(`${config.n8nBaseUrl}${config.webhooks.moveTicket}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jiraTicketKey: ticketKey,
-                targetStatus: JIRA_STATUS.IN_REVIEW,
-                submittedBy: interaction.user.tag,
-                discordUserId: interaction.user.id
-            })
-        });
+async function handleReview(interaction, ticketKey) {
+    const result = await taskManagementService.submitForReview({
+        ticketKey,
+        userId: interaction.user.id,
+        userTag: interaction.user.tag,
+        guild: interaction.guild
+    });
 
-        const result = await response.json();
-
-        if (!result.success) {
-            return interaction.editReply({
-                content: `❌ Could not move ticket: ${result.error || 'Unknown error'}`
-            });
-        }
-
-        // Post to tasks-for-review forum
-        const guild = interaction.guild;
-        const reviewForum = guild.channels.cache.get(config.channels.tasksForReview);
-
-        if (reviewForum && reviewForum.type === ChannelType.GuildForum) {
-            const thread = await reviewForum.threads.create({
-                name: `${ticketKey}: ${result.summary || 'Review Request'}`,
-                message: {
-                    embeds: [{
-                        title: `📋 ${ticketKey}: ${result.summary || 'Task'}`,
-                        url: `${config.jiraBaseUrl}/browse/${ticketKey}`,
-                        description: `Submitted for review by <@${interaction.user.id}>`,
-                        color: COLORS.IN_REVIEW,
-                        fields: [
-                            { name: 'Status', value: JIRA_STATUS.IN_REVIEW, inline: true },
-                            { name: 'Submitted By', value: interaction.user.tag, inline: true }
-                        ],
-                        footer: { text: 'React with ✅ to approve | React with ❌ to deny' },
-                        timestamp: new Date().toISOString()
-                    }]
-                }
-            });
-
-            // Add default reactions for easy approval/denial
-            const starterMessage = await thread.fetchStarterMessage();
-            if (starterMessage) {
-                await starterMessage.react('✅');
-                await starterMessage.react('❌');
-            }
-
-            // Ping PM role
-            await thread.send({
-                content: `<@&${config.roles.pm}> New task ready for review!`,
-                allowedMentions: { roles: [config.roles.pm] }
-            });
-        }
-
-        await interaction.editReply({
-            content: `✅ **${ticketKey}** submitted for review! PMs have been notified.`
-        });
-
-    } catch (error) {
-        logger.error('Error submitting for review:', error);
-        await interaction.editReply({
-            content: `⚠️ Error: ${error.message}`
+    if (!result.success) {
+        return interaction.editReply({
+            content: `❌ Could not move ticket: ${result.error}`
         });
     }
+
+    await interaction.editReply({
+        content: `✅ **${ticketKey}** submitted for review! PMs have been notified.`
+    });
 }
 
-async function handleDone(interaction, client, config, ticketKey) {
-    // Check if user has PM role
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    
-    if (!member.roles.cache.has(config.roles.pm)) {
+async function handleDone(interaction, ticketKey) {
+    const hasPm = await taskManagementService.hasPmRole(interaction.guild, interaction.user.id);
+    if (!hasPm) {
         return interaction.editReply({
             content: '❌ Only PMs can mark tasks as done.'
         });
     }
 
-    try {
-        const response = await fetch(`${config.n8nBaseUrl}${config.webhooks.moveTicket}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jiraTicketKey: ticketKey,
-                targetStatus: JIRA_STATUS.DONE,
-                approvedBy: interaction.user.tag
-            })
-        });
+    const result = await taskManagementService.markAsDone({
+        ticketKey,
+        approverTag: interaction.user.tag,
+        approver: interaction.user,
+        guild: interaction.guild
+    });
 
-        const result = await response.json();
-
-        if (!result.success) {
-            return interaction.editReply({
-                content: `❌ Could not move ticket: ${result.error || 'Unknown error'}`
-            });
-        }
-
-        const guild = interaction.guild;
-
-        // Find the assignee's Discord user and their forum
-        const { discordUserId, discordUser } = await userLookupService.lookupDiscordUser(
-            guild,
-            result.assignee?.emailAddress
-        );
-
-        // Delete the thread in the user's working tickets forum
-        const workingCategory = guild.channels.cache.get(config.categories.workingTickets);
-        let ticketThread = null;
-
-        if (workingCategory) {
-            const { userForum, ticketThread: foundThread } = await userLookupService.findUserForum(
-                workingCategory,
-                discordUserId,
-                discordUser,
-                ticketKey
-            );
-            ticketThread = foundThread;
-
-            // If we found forum but not thread via Tier 3, search for thread
-            if (userForum && !ticketThread) {
-                ticketThread = await userLookupService.findTicketThread(userForum, ticketKey);
-            }
-
-            if (ticketThread) {
-                threadService.deleteThreadWithDelay(
-                    ticketThread,
-                    'Task completed - moved to completed tasks',
-                    TIMEOUTS.THREAD_DELETE_SHORT
-                );
-            }
-        }
-
-        // Delete any review threads for this ticket
-        const reviewForum = guild.channels.cache.get(config.channels.tasksForReview);
-        if (reviewForum && reviewForum.type === ChannelType.GuildForum) {
-            const reviewThread = await threadService.findTicketThread(reviewForum, ticketKey);
-
-            if (reviewThread) {
-                threadService.deleteThreadWithDelay(
-                    reviewThread,
-                    'Task approved - moved to completed tasks',
-                    TIMEOUTS.THREAD_DELETE_MEDIUM
-                );
-            }
-        }
-
-        // Create thread in Completed Tasks forum
-        await forumService.createCompletedTaskThread(guild, ticketKey, result, interaction.user);
-
-        await interaction.editReply({
-            content: `✅ **${ticketKey}** marked as **Done** and moved to Completed Tasks!`
-        });
-
-    } catch (error) {
-        logger.error('Error marking done:', error);
-        await interaction.editReply({
-            content: `⚠️ Error: ${error.message}`
+    if (!result.success) {
+        return interaction.editReply({
+            content: `❌ Could not move ticket: ${result.error}`
         });
     }
+
+    await interaction.editReply({
+        content: `✅ **${ticketKey}** marked as **Done** and moved to Completed Tasks!`
+    });
 }
 
-async function handleDeny(interaction, client, config, ticketKey) {
-    // Check if user has PM role
-    const member = await interaction.guild.members.fetch(interaction.user.id);
-    
-    if (!member.roles.cache.has(config.roles.pm)) {
+async function handleDeny(interaction, ticketKey) {
+    const hasPm = await taskManagementService.hasPmRole(interaction.guild, interaction.user.id);
+    if (!hasPm) {
         return interaction.editReply({
             content: '❌ Only PMs can deny task reviews.'
         });
@@ -251,141 +138,40 @@ async function handleDeny(interaction, client, config, ticketKey) {
 
     const reason = interaction.options.getString('reason') || 'No reason provided';
 
-    try {
-        // Move ticket back to In Progress
-        const response = await fetch(`${config.n8nBaseUrl}${config.webhooks.moveTicket}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jiraTicketKey: ticketKey,
-                targetStatus: JIRA_STATUS.IN_PROGRESS,
-                deniedBy: interaction.user.tag
-            })
-        });
+    const result = await taskManagementService.denyReview({
+        ticketKey,
+        reason,
+        denierTag: interaction.user.tag,
+        denierId: interaction.user.id,
+        guild: interaction.guild
+    });
 
-        const result = await response.json();
-
-        if (!result.success) {
-            return interaction.editReply({
-                content: `❌ Could not deny ticket: ${result.error || 'Unknown error'}`
-            });
-        }
-
-        const guild = interaction.guild;
-
-        // Find the assignee's Discord user and their forum
-        const { discordUserId, discordUser } = await userLookupService.lookupDiscordUser(
-            guild,
-            result.assignee?.emailAddress
-        );
-
-        // Delete any review threads for this ticket (result is pushed to working thread)
-        const reviewForum = guild.channels.cache.get(config.channels.tasksForReview);
-        if (reviewForum && reviewForum.type === ChannelType.GuildForum) {
-            const reviewThread = await threadService.findTicketThread(reviewForum, ticketKey);
-
-            if (reviewThread) {
-                threadService.deleteThreadWithDelay(
-                    reviewThread,
-                    'Review denied - feedback sent to working thread',
-                    TIMEOUTS.THREAD_DELETE_SHORT
-                );
-            }
-        }
-
-        // Notify in the assignee's working tickets thread
-        const workingCategory = guild.channels.cache.get(config.categories.workingTickets);
-
-        if (workingCategory) {
-            const { userForum, ticketThread: foundThread } = await userLookupService.findUserForum(
-                workingCategory,
-                discordUserId,
-                discordUser,
-                ticketKey
-            );
-            let ticketThread = foundThread;
-
-            // If we found forum but not thread via Tier 3, search for thread
-            if (userForum && !ticketThread) {
-                ticketThread = await userLookupService.findTicketThread(userForum, ticketKey);
-            }
-
-            if (ticketThread) {
-                // Unarchive if needed
-                if (ticketThread.archived) {
-                    await ticketThread.setArchived(false);
-                }
-                // Ping the assignee so they get notified
-                const assigneePing = discordUserId ? `<@${discordUserId}> - ` : '';
-                await ticketThread.send({
-                    content: `${assigneePing}⚠️ **Review Denied** by <@${interaction.user.id}>.\n**Reason:** ${reason}\n\nPlease address the feedback and use \`/task review ${ticketKey}\` when ready to resubmit.`
-                });
-                logger.debug(`Posted denial message to working thread for ${ticketKey}`);
-            }
-        }
-
-        await interaction.editReply({
-            content: `❌ **${ticketKey}** review denied and sent back to **In Progress**.\nAssignee has been notified.`
-        });
-
-    } catch (error) {
-        logger.error('Error denying ticket:', error);
-        await interaction.editReply({
-            content: `⚠️ Error: ${error.message}`
+    if (!result.success) {
+        return interaction.editReply({
+            content: `❌ Could not deny ticket: ${result.error}`
         });
     }
+
+    await interaction.editReply({
+        content: `❌ **${ticketKey}** review denied and sent back to **In Progress**.\nAssignee has been notified.`
+    });
 }
 
-async function handleQuit(interaction, client, config, ticketKey) {
-    try {
-        const response = await fetch(`${config.n8nBaseUrl}/webhook/quit-ticket`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jiraTicketKey: ticketKey,
-                discordUserId: interaction.user.id,
-                discordUsername: interaction.user.username
-            })
-        });
+async function handleQuit(interaction, ticketKey) {
+    const result = await taskManagementService.quitTicket({
+        ticketKey,
+        userId: interaction.user.id,
+        username: interaction.user.username,
+        guild: interaction.guild
+    });
 
-        const result = await response.json();
-
-        if (!result.success) {
-            return interaction.editReply({
-                content: `❌ Could not quit ticket: ${result.error || 'Unknown error'}`
-            });
-        }
-
-        // Try to archive the thread in user's personal forum
-        const guild = interaction.guild;
-        const workingCategory = guild.channels.cache.get(config.categories.workingTickets);
-        const forumName = `tasks-${interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-        
-        if (workingCategory) {
-            const taskForum = workingCategory.children?.cache.find(
-                ch => ch.name === forumName && ch.type === ChannelType.GuildForum
-            );
-
-            if (taskForum) {
-                // Find and archive the thread for this ticket
-                const ticketThread = await threadService.findTicketThread(taskForum, ticketKey);
-                if (ticketThread) {
-                    await ticketThread.send({
-                        content: `🚪 Task unassigned by <@${interaction.user.id}>. Ticket moved back to **${JIRA_STATUS.TO_DO}**.`
-                    });
-                    threadService.archiveThreadWithDelay(ticketThread, TIMEOUTS.THREAD_DELETE_SHORT);
-                }
-            }
-        }
-
-        await interaction.editReply({
-            content: `🚪 You've been unassigned from **${ticketKey}**. The ticket has been moved back to **${JIRA_STATUS.TO_DO}**.`
-        });
-
-    } catch (error) {
-        logger.error('Error quitting ticket:', error);
-        await interaction.editReply({
-            content: `⚠️ Error: ${error.message}`
+    if (!result.success) {
+        return interaction.editReply({
+            content: `❌ Could not quit ticket: ${result.error}`
         });
     }
+
+    await interaction.editReply({
+        content: `🚪 You've been unassigned from **${ticketKey}**. The ticket has been moved back to **To Do**.`
+    });
 }

@@ -1,8 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
-const config = require('../../src/config');
 const { createLogger } = require('../../src/utils/logger');
-
-const { n8nBaseUrl, webhooks } = config;
+const n8nService = require('../../src/services/n8nService');
 
 const logger = createLogger('Whoami');
 
@@ -10,21 +8,12 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('whoami')
         .setDescription('Check your current Jira registration status'),
-    
-    async execute(interaction) {
-        const discordUserId = interaction.user.id;
 
+    async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            const response = await fetch(`${n8nBaseUrl}${webhooks.registerUser}?discordUserId=${discordUserId}&action=lookup`, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            const result = await response.json();
+            const result = await n8nService.lookupUserByDiscordId(interaction.user.id);
 
             if (result.success && result.jiraEmail) {
                 await interaction.editReply({

@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { createLogger } = require('../../src/utils/logger');
-const { JIRA_STATUS, COLORS, STATUS_EMOJIS } = require('../../src/utils/constants');
+const n8nService = require('../../src/services/n8nService');
+const { getStatusEmoji, getStatusLabel, getStatusColor } = require('../../src/utils/formatters');
 
 const logger = createLogger('Tasks');
 
@@ -25,18 +26,7 @@ module.exports = {
         const statusFilter = interaction.options.getString('status');
 
         try {
-            // Build URL with optional status filter
-            let url = `${config.n8nBaseUrl}/webhook/get-user-tasks?discordUserId=${interaction.user.id}`;
-            if (statusFilter) {
-                url += `&status=${statusFilter}`;
-            }
-
-            const response = await fetch(url, {
-                method: 'GET',
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            const result = await response.json();
+            const result = await n8nService.getUserTasks(interaction.user.id, statusFilter);
 
             if (!result.success) {
                 return interaction.editReply({
@@ -78,32 +68,3 @@ module.exports = {
         }
     }
 };
-
-function getStatusEmoji(status) {
-    const statusLower = status?.toLowerCase() || '';
-    if (statusLower.includes('done')) return STATUS_EMOJIS.DONE;
-    if (statusLower.includes('review')) return STATUS_EMOJIS.IN_REVIEW;
-    if (statusLower.includes('progress')) return STATUS_EMOJIS.IN_PROGRESS;
-    if (statusLower.includes('to do')) return STATUS_EMOJIS.TO_DO;
-    return STATUS_EMOJIS.DEFAULT;
-}
-
-function getStatusLabel(status) {
-    switch (status) {
-        case 'todo': return JIRA_STATUS.TO_DO;
-        case 'inprogress': return JIRA_STATUS.IN_PROGRESS;
-        case 'inreview': return JIRA_STATUS.IN_REVIEW;
-        case 'done': return JIRA_STATUS.DONE;
-        default: return status;
-    }
-}
-
-function getStatusColor(status) {
-    switch (status) {
-        case 'todo': return COLORS.TO_DO;
-        case 'inprogress': return COLORS.IN_PROGRESS;
-        case 'inreview': return COLORS.IN_REVIEW;
-        case 'done': return COLORS.DONE;
-        default: return COLORS.TO_DO;
-    }
-}

@@ -1,9 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
-const config = require('../../src/config');
 const { createLogger } = require('../../src/utils/logger');
-
-const { n8nBaseUrl, webhooks } = config;
 const { isValidEmail } = require('../../src/utils/validators');
+const n8nService = require('../../src/services/n8nService');
 
 const logger = createLogger('Register');
 
@@ -18,13 +16,9 @@ module.exports = {
     
     async execute(interaction) {
         const jiraEmail = interaction.options.getString('jira_email');
-        const discordUserId = interaction.user.id;
-        const discordUsername = interaction.user.username;
-        const discordTag = interaction.user.tag;
 
-        // Validate email format
         if (!isValidEmail(jiraEmail)) {
-            return await interaction.reply({
+            return interaction.reply({
                 content: '❌ Invalid email format. Please provide a valid email address.',
                 ephemeral: true
             });
@@ -33,21 +27,11 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            const response = await fetch(`${n8nBaseUrl}${webhooks.registerUser}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    discordUserId,
-                    discordUsername,
-                    discordTag,
-                    jiraEmail,
-                    registeredAt: new Date().toISOString()
-                })
-            });
-
-            const result = await response.json();
+            const result = await n8nService.registerUser(
+                interaction.user.id,
+                interaction.user.username,
+                jiraEmail
+            );
 
             if (result.success) {
                 await interaction.editReply({

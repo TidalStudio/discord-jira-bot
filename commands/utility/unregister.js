@@ -1,8 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
-const config = require('../../src/config');
 const { createLogger } = require('../../src/utils/logger');
-
-const { n8nBaseUrl, webhooks } = config;
+const n8nService = require('../../src/services/n8nService');
 
 const logger = createLogger('Unregister');
 
@@ -10,25 +8,12 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('unregister')
         .setDescription('Unlink your Discord account from your Jira account'),
-    
-    async execute(interaction) {
-        const discordUserId = interaction.user.id;
 
+    async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            const response = await fetch(`${n8nBaseUrl}${webhooks.registerUser}`, {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    discordUserId,
-                    action: 'unregister'
-                })
-            });
-
-            const result = await response.json();
+            const result = await n8nService.unregisterUser(interaction.user.id);
 
             if (result.success) {
                 await interaction.editReply({
