@@ -1,0 +1,201 @@
+{
+  "name": "Jira to Discord - Forum Posts",
+  "nodes": [
+    {
+      "parameters": {
+        "events": ["jira:issue_created"],
+        "additionalFields": {
+          "filter": "project = KAN"
+        }
+      },
+      "id": "jira-trigger",
+      "name": "Jira Trigger",
+      "type": "n8n-nodes-base.jiraTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.issue.fields.assignee }}",
+              "operator": { "type": "null", "operation": "isNull" },
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "id": "check-unassigned",
+      "name": "Is Unassigned?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const issue = $input.first().json.issue;\nconst fields = issue.fields;\nconst labels = (fields.labels || []).map(l => l.toLowerCase());\n\nreturn {\n  issueKey: issue.key,\n  summary: fields.summary,\n  description: fields.description ? (typeof fields.description === 'string' ? fields.description.substring(0, 500) : 'See ticket for details') : 'No description',\n  type: fields.issuetype?.name || 'Task',\n  priority: fields.priority?.name || 'Medium',\n  labels: fields.labels || [],\n  hasCodeLabel: labels.includes('code'),\n  hasArtLabel: labels.includes('art'),\n  hasAudioLabel: labels.includes('audio'),\n  jiraUrl: `https://tidalstudios.atlassian.net/browse/${issue.key}`\n};"
+      },
+      "id": "format-ticket",
+      "name": "Format Ticket Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasCodeLabel }}",
+              "operator": { "type": "boolean", "operation": "true" },
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "id": "check-code",
+      "name": "Has Code Label?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasArtLabel }}",
+              "operator": { "type": "boolean", "operation": "true" },
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "id": "check-art",
+      "name": "Has Art Label?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasAudioLabel }}",
+              "operator": { "type": "boolean", "operation": "true" },
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "id": "check-audio",
+      "name": "Has Audio Label?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/1448045008606461974/threads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $json.issueKey }}: {{ $json.summary.substring(0, 90) }}\",\n  \"auto_archive_duration\": 10080,\n  \"message\": {\n    \"embeds\": [{\n      \"title\": \"🎫 {{ $json.issueKey }}: {{ $json.summary }}\",\n      \"url\": \"{{ $json.jiraUrl }}\",\n      \"description\": \"{{ $json.description }}\",\n      \"color\": 3447003,\n      \"fields\": [\n        { \"name\": \"Type\", \"value\": \"{{ $json.type }}\", \"inline\": true },\n        { \"name\": \"Priority\", \"value\": \"{{ $json.priority }}\", \"inline\": true },\n        { \"name\": \"Labels\", \"value\": \"{{ $json.labels.length > 0 ? $json.labels.join(', ') : 'None' }}\", \"inline\": true }\n      ],\n      \"footer\": { \"text\": \"React with ✅ to claim this ticket\" },\n      \"timestamp\": \"{{ new Date().toISOString() }}\"\n    }]\n  }\n}"
+      },
+      "id": "post-code-forum",
+      "name": "Post to Code Forum",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/1448045120199987230/threads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $json.issueKey }}: {{ $json.summary.substring(0, 90) }}\",\n  \"auto_archive_duration\": 10080,\n  \"message\": {\n    \"embeds\": [{\n      \"title\": \"🎫 {{ $json.issueKey }}: {{ $json.summary }}\",\n      \"url\": \"{{ $json.jiraUrl }}\",\n      \"description\": \"{{ $json.description }}\",\n      \"color\": 3447003,\n      \"fields\": [\n        { \"name\": \"Type\", \"value\": \"{{ $json.type }}\", \"inline\": true },\n        { \"name\": \"Priority\", \"value\": \"{{ $json.priority }}\", \"inline\": true },\n        { \"name\": \"Labels\", \"value\": \"{{ $json.labels.length > 0 ? $json.labels.join(', ') : 'None' }}\", \"inline\": true }\n      ],\n      \"footer\": { \"text\": \"React with ✅ to claim this ticket\" },\n      \"timestamp\": \"{{ new Date().toISOString() }}\"\n    }]\n  }\n}"
+      },
+      "id": "post-art-forum",
+      "name": "Post to Art Forum",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/1448045167503347762/threads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $json.issueKey }}: {{ $json.summary.substring(0, 90) }}\",\n  \"auto_archive_duration\": 10080,\n  \"message\": {\n    \"embeds\": [{\n      \"title\": \"🎫 {{ $json.issueKey }}: {{ $json.summary }}\",\n      \"url\": \"{{ $json.jiraUrl }}\",\n      \"description\": \"{{ $json.description }}\",\n      \"color\": 3447003,\n      \"fields\": [\n        { \"name\": \"Type\", \"value\": \"{{ $json.type }}\", \"inline\": true },\n        { \"name\": \"Priority\", \"value\": \"{{ $json.priority }}\", \"inline\": true },\n        { \"name\": \"Labels\", \"value\": \"{{ $json.labels.length > 0 ? $json.labels.join(', ') : 'None' }}\", \"inline\": true }\n      ],\n      \"footer\": { \"text\": \"React with ✅ to claim this ticket\" },\n      \"timestamp\": \"{{ new Date().toISOString() }}\"\n    }]\n  }\n}"
+      },
+      "id": "post-audio-forum",
+      "name": "Post to Audio Forum",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1447967622107758694/YOUR_WEBHOOK_TOKEN",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [{\n    \"title\": \"🎫 {{ $json.issueKey }}: {{ $json.summary }}\",\n    \"url\": \"{{ $json.jiraUrl }}\",\n    \"description\": \"New ticket created\",\n    \"color\": 3447003,\n    \"fields\": [\n      { \"name\": \"Type\", \"value\": \"{{ $json.type }}\", \"inline\": true },\n      { \"name\": \"Priority\", \"value\": \"{{ $json.priority }}\", \"inline\": true },\n      { \"name\": \"Labels\", \"value\": \"{{ $json.labels.length > 0 ? $json.labels.join(', ') : 'None' }}\", \"inline\": true }\n    ],\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }]\n}"
+      },
+      "id": "post-notifs",
+      "name": "Post to Notifications",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 600]
+    }
+  ],
+  "connections": {
+    "Jira Trigger": {
+      "main": [[{ "node": "Is Unassigned?", "type": "main", "index": 0 }]]
+    },
+    "Is Unassigned?": {
+      "main": [
+        [{ "node": "Format Ticket Data", "type": "main", "index": 0 }],
+        [{ "node": "Post to Notifications", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Ticket Data": {
+      "main": [[
+        { "node": "Has Code Label?", "type": "main", "index": 0 },
+        { "node": "Has Art Label?", "type": "main", "index": 0 },
+        { "node": "Has Audio Label?", "type": "main", "index": 0 },
+        { "node": "Post to Notifications", "type": "main", "index": 0 }
+      ]]
+    },
+    "Has Code Label?": {
+      "main": [[{ "node": "Post to Code Forum", "type": "main", "index": 0 }], []]
+    },
+    "Has Art Label?": {
+      "main": [[{ "node": "Post to Art Forum", "type": "main", "index": 0 }], []]
+    },
+    "Has Audio Label?": {
+      "main": [[{ "node": "Post to Audio Forum", "type": "main", "index": 0 }], []]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

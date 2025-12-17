@@ -1,0 +1,14 @@
+{
+  "name": "jira-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for Jira integration - handles reactions and user registration",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1"
+  }
+}
