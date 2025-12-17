@@ -12,18 +12,23 @@ config.json
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS files
 .DS_Store
 Thumbs.db
+nul
 
 # Logs
 *.log
 npm-debug.log*
 
+# Test coverage
+coverage/
+
 # Claude Code
 .claude/
 
-# Tickets
+# Tickets (internal planning)
 tickets/
-nul
