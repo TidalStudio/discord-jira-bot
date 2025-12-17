@@ -1,8 +1,10 @@
 require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
+const config = require('./src/config');
 const { createLogger } = require('./src/utils/logger');
-const { EMOJIS, JIRA_STATUS, COLORS, TIMEOUTS, PATTERNS, FORUM } = require('./src/utils/constants');
+const { EMOJIS, JIRA_STATUS, COLORS, TIMEOUTS, FORUM } = require('./src/utils/constants');
+const { extractTicketKey } = require('./src/utils/validators');
 
 const logger = createLogger('Bot');
 const {
@@ -15,34 +17,6 @@ const {
     PermissionFlagsBits,
     EmbedBuilder
 } = require('discord.js');
-
-// Build config from environment variables
-const config = {
-    token: process.env.DISCORD_TOKEN,
-    clientId: process.env.DISCORD_CLIENT_ID,
-    guildId: process.env.DISCORD_GUILD_ID,
-    n8nBaseUrl: process.env.N8N_BASE_URL,
-    jiraBaseUrl: process.env.JIRA_BASE_URL,
-    webhooks: {
-        assignTicket: '/webhook/assign-ticket',
-        registerUser: '/webhook/register-user',
-        moveTicket: '/webhook/move-ticket'
-    },
-    channels: {
-        codeUnassigned: process.env.CHANNEL_CODE_UNASSIGNED,
-        artUnassigned: process.env.CHANNEL_ART_UNASSIGNED,
-        audioUnassigned: process.env.CHANNEL_AUDIO_UNASSIGNED,
-        tasksForReview: process.env.CHANNEL_TASKS_FOR_REVIEW,
-        ticketNotifs: process.env.CHANNEL_TICKET_NOTIFS
-    },
-    categories: {
-        workingTickets: process.env.CATEGORY_WORKING_TICKETS,
-        completedTasks: process.env.CATEGORY_COMPLETED_TASKS
-    },
-    roles: {
-        pm: process.env.ROLE_PM
-    }
-};
 
 // Create client with necessary intents
 const client = new Client({
@@ -147,18 +121,17 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     let jiraTicketKey = null;
     
     // Try thread name first (format: "KAN-123: Title")
-    const threadNameMatch = channel.name.match(PATTERNS.JIRA_TICKET_EXTRACT);
-    if (threadNameMatch) {
-        jiraTicketKey = threadNameMatch[1];
-    }
+    jiraTicketKey = extractTicketKey(channel.name);
     
     // Also check message embeds and content
     if (!jiraTicketKey && message.embeds && message.embeds.length > 0) {
         for (const embed of message.embeds) {
-            const titleMatch = embed.title?.match(PATTERNS.JIRA_TICKET_EXTRACT);
-            const urlMatch = embed.url?.match(/browse\/([A-Z]+-\d+)/);
-            if (titleMatch) jiraTicketKey = titleMatch[1];
-            else if (urlMatch) jiraTicketKey = urlMatch[1];
+            jiraTicketKey = extractTicketKey(embed.title);
+            if (!jiraTicketKey) {
+                // Fallback: extract from URL
+                const urlMatch = embed.url?.match(/browse\/([A-Z]+-\d+)/);
+                if (urlMatch) jiraTicketKey = urlMatch[1];
+            }
             if (jiraTicketKey) break;
         }
     }

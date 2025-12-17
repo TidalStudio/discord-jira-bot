@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { n8nBaseUrl, webhooks } = require('../../config.json');
 const { createLogger } = require('../../src/utils/logger');
+const { isValidEmail } = require('../../src/utils/validators');
 
 const logger = createLogger('Register');
 
@@ -20,8 +21,7 @@ module.exports = {
         const discordTag = interaction.user.tag;
 
         // Validate email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(jiraEmail)) {
+        if (!isValidEmail(jiraEmail)) {
             return await interaction.reply({
                 content: '❌ Invalid email format. Please provide a valid email address.',
                 ephemeral: true

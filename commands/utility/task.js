@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { createLogger } = require('../../src/utils/logger');
-const { JIRA_STATUS, COLORS, PATTERNS, TIMEOUTS, FORUM } = require('../../src/utils/constants');
+const { JIRA_STATUS, COLORS, TIMEOUTS, FORUM } = require('../../src/utils/constants');
+const { isValidTicketKey } = require('../../src/utils/validators');
 
 const logger = createLogger('Task');
 
@@ -50,7 +51,7 @@ module.exports = {
         const ticketKey = interaction.options.getString('ticket').toUpperCase();
 
         // Validate ticket format
-        if (!PATTERNS.JIRA_TICKET.test(ticketKey)) {
+        if (!isValidTicketKey(ticketKey)) {
             return interaction.reply({
                 content: '❌ Invalid ticket format. Use format like `KAN-123`.',
                 flags: 64

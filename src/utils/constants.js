@@ -42,12 +42,6 @@ const TIMEOUTS = {
     THREAD_DELETE_LONG: 3000
 };
 
-// Regex patterns for Jira ticket keys
-const PATTERNS = {
-    JIRA_TICKET: /^[A-Z]+-\d+$/,           // Validation (exact match)
-    JIRA_TICKET_EXTRACT: /([A-Z]+-\d+)/    // Extraction (find in string)
-};
-
 // Forum channel settings
 const FORUM = {
     AUTO_ARCHIVE_DURATION: 10080  // 7 days in minutes
@@ -59,6 +53,5 @@ module.exports = {
     COLORS,
     STATUS_EMOJIS,
     TIMEOUTS,
-    PATTERNS,
     FORUM
 };
