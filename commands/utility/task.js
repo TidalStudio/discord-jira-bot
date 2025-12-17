@@ -1,9 +1,10 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
 const { createLogger } = require('../../src/utils/logger');
-const { JIRA_STATUS, COLORS, TIMEOUTS, FORUM } = require('../../src/utils/constants');
+const { JIRA_STATUS, COLORS, TIMEOUTS } = require('../../src/utils/constants');
 const { isValidTicketKey } = require('../../src/utils/validators');
 const userLookupService = require('../../src/services/userLookupService');
 const threadService = require('../../src/services/threadService');
+const forumService = require('../../src/services/forumService');
 
 const logger = createLogger('Task');
 
@@ -224,7 +225,7 @@ async function handleDone(interaction, client, config, ticketKey) {
         }
 
         // Create thread in Completed Tasks forum
-        await createCompletedTaskThread(guild, config, ticketKey, result, interaction.user);
+        await forumService.createCompletedTaskThread(guild, ticketKey, result, interaction.user);
 
         await interaction.editReply({
             content: `✅ **${ticketKey}** marked as **Done** and moved to Completed Tasks!`
@@ -332,72 +333,6 @@ async function handleDeny(interaction, client, config, ticketKey) {
         await interaction.editReply({
             content: `⚠️ Error: ${error.message}`
         });
-    }
-}
-
-async function createCompletedTaskThread(guild, config, ticketKey, ticketInfo, approver) {
-    try {
-        logger.debug(`Creating completed task thread for ${ticketKey}...`);
-
-        const assigneeName = ticketInfo.assignee?.displayName || ticketInfo.assignee?.name || 'Unassigned';
-        const forumName = `tasks-${assigneeName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-
-        logger.debug(`Assignee: ${assigneeName}, Forum name: ${forumName}`);
-
-        // Look for existing forum channel in the completed tasks category (same pattern as working tickets)
-        const completedCategory = guild.channels.cache.get(config.categories.completedTasks);
-        let userForum = null;
-        
-        if (completedCategory) {
-            userForum = completedCategory.children?.cache.find(
-                ch => ch.name === forumName && ch.type === ChannelType.GuildForum
-            );
-        }
-
-        // Create forum if doesn't exist (same pattern as working tickets)
-        if (!userForum) {
-            logger.debug(`Forum ${forumName} not found in completed tasks, creating...`);
-            try {
-                userForum = await guild.channels.create({
-                    name: forumName,
-                    type: ChannelType.GuildForum,
-                    parent: config.categories.completedTasks,
-                    topic: `Completed tasks for ${assigneeName}`,
-                    defaultAutoArchiveDuration: FORUM.AUTO_ARCHIVE_DURATION
-                });
-                logger.info(`✅ Created completed tasks forum: ${forumName} (ID: ${userForum.id})`);
-            } catch (error) {
-                logger.error('Error creating completed tasks forum:', error);
-                return;
-            }
-        } else {
-            logger.debug(`Found existing completed tasks forum: ${forumName}`);
-        }
-
-        // Create thread for the completed task
-        await userForum.threads.create({
-            name: `✅ ${ticketKey}: ${ticketInfo.summary || 'Completed Task'}`,
-            message: {
-                embeds: [{
-                    title: `✅ ${ticketKey}: ${ticketInfo.summary || 'Task'}`,
-                    url: `${config.jiraBaseUrl}/browse/${ticketKey}`,
-                    description: `Task completed and approved!`,
-                    color: COLORS.DONE,
-                    fields: [
-                        { name: 'Status', value: JIRA_STATUS.DONE, inline: true },
-                        { name: 'Completed By', value: assigneeName, inline: true },
-                        { name: 'Approved By', value: approver.tag, inline: true }
-                    ],
-                    footer: { text: 'Great work! 🎉' },
-                    timestamp: new Date().toISOString()
-                }]
-            }
-        });
-
-        logger.info(`✅ Created completed task thread for ${ticketKey} in ${forumName}`);
-    } catch (error) {
-        logger.error('Error creating completed task thread:', error);
-        logger.error('Error stack:', error.stack);
     }
 }
 
