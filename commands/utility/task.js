@@ -3,6 +3,7 @@ const { createLogger } = require('../../src/utils/logger');
 const { JIRA_STATUS, COLORS, TIMEOUTS, FORUM } = require('../../src/utils/constants');
 const { isValidTicketKey } = require('../../src/utils/validators');
 const userLookupService = require('../../src/services/userLookupService');
+const threadService = require('../../src/services/threadService');
 
 const logger = createLogger('Task');
 
@@ -200,37 +201,25 @@ async function handleDone(interaction, client, config, ticketKey) {
             }
 
             if (ticketThread) {
-                setTimeout(async () => {
-                    try {
-                        await ticketThread.delete('Task completed - moved to completed tasks');
-                        logger.info(`🗑️ Deleted working ticket thread for ${ticketKey}`);
-                    } catch (e) {
-                        logger.error('Could not delete working ticket thread:', e);
-                    }
-                }, TIMEOUTS.THREAD_DELETE_SHORT);
+                threadService.deleteThreadWithDelay(
+                    ticketThread,
+                    'Task completed - moved to completed tasks',
+                    TIMEOUTS.THREAD_DELETE_SHORT
+                );
             }
         }
 
         // Delete any review threads for this ticket
         const reviewForum = guild.channels.cache.get(config.channels.tasksForReview);
         if (reviewForum && reviewForum.type === ChannelType.GuildForum) {
-            const activeThreads = await reviewForum.threads.fetchActive();
-            const archivedThreads = await reviewForum.threads.fetchArchived();
-
-            let reviewThread = activeThreads.threads.find(t => t.name.startsWith(ticketKey));
-            if (!reviewThread) {
-                reviewThread = archivedThreads.threads.find(t => t.name.startsWith(ticketKey));
-            }
+            const reviewThread = await threadService.findTicketThread(reviewForum, ticketKey);
 
             if (reviewThread) {
-                setTimeout(async () => {
-                    try {
-                        await reviewThread.delete('Task approved - moved to completed tasks');
-                        logger.info(`🗑️ Deleted review thread for ${ticketKey}`);
-                    } catch (e) {
-                        logger.error('Could not delete review thread:', e);
-                    }
-                }, TIMEOUTS.THREAD_DELETE_MEDIUM);
+                threadService.deleteThreadWithDelay(
+                    reviewThread,
+                    'Task approved - moved to completed tasks',
+                    TIMEOUTS.THREAD_DELETE_MEDIUM
+                );
             }
         }
 
@@ -292,17 +281,14 @@ async function handleDeny(interaction, client, config, ticketKey) {
         // Delete any review threads for this ticket (result is pushed to working thread)
         const reviewForum = guild.channels.cache.get(config.channels.tasksForReview);
         if (reviewForum && reviewForum.type === ChannelType.GuildForum) {
-            const reviewThread = await userLookupService.findTicketThread(reviewForum, ticketKey);
+            const reviewThread = await threadService.findTicketThread(reviewForum, ticketKey);
 
             if (reviewThread) {
-                setTimeout(async () => {
-                    try {
-                        await reviewThread.delete('Review denied - feedback sent to working thread');
-                        logger.info(`🗑️ Deleted review thread for ${ticketKey} (denied)`);
-                    } catch (e) {
-                        logger.error('Could not delete review thread:', e);
-                    }
-                }, TIMEOUTS.THREAD_DELETE_SHORT);
+                threadService.deleteThreadWithDelay(
+                    reviewThread,
+                    'Review denied - feedback sent to working thread',
+                    TIMEOUTS.THREAD_DELETE_SHORT
+                );
             }
         }
 
@@ -447,19 +433,12 @@ async function handleQuit(interaction, client, config, ticketKey) {
 
             if (taskForum) {
                 // Find and archive the thread for this ticket
-                const threads = await taskForum.threads.fetch();
-                const ticketThread = threads.threads.find(t => t.name.startsWith(ticketKey));
+                const ticketThread = await threadService.findTicketThread(taskForum, ticketKey);
                 if (ticketThread) {
                     await ticketThread.send({
                         content: `🚪 Task unassigned by <@${interaction.user.id}>. Ticket moved back to **${JIRA_STATUS.TO_DO}**.`
                     });
-                    setTimeout(async () => {
-                        try {
-                            await ticketThread.setArchived(true);
-                        } catch (e) {
-                            logger.error('Could not archive thread:', e);
-                        }
-                    }, TIMEOUTS.THREAD_DELETE_SHORT);
+                    threadService.archiveThreadWithDelay(ticketThread, TIMEOUTS.THREAD_DELETE_SHORT);
                 }
             }
         }

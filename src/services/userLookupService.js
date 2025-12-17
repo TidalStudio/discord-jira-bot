@@ -7,6 +7,7 @@
 
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const n8nService = require('./n8nService');
+const { findTicketThread } = require('./threadService');
 const { createLogger } = require('../utils/logger');
 
 const logger = createLogger('UserLookupService');
@@ -97,22 +98,11 @@ async function findUserForum(category, discordUserId, discordUser, ticketKey) {
         const allForums = category.children?.cache.filter(ch => ch.type === ChannelType.GuildForum);
 
         for (const [, forum] of allForums) {
-            try {
-                const activeThreads = await forum.threads.fetchActive();
-                const archivedThreads = await forum.threads.fetchArchived();
-
-                ticketThread = activeThreads.threads.find(t => t.name.startsWith(ticketKey));
-                if (!ticketThread) {
-                    ticketThread = archivedThreads.threads.find(t => t.name.startsWith(ticketKey));
-                }
-
-                if (ticketThread) {
-                    userForum = forum;
-                    logger.debug(`Tier 3 success: Found ticket thread in forum: ${forum.name}`);
-                    break;
-                }
-            } catch (e) {
-                logger.debug(`Error searching forum ${forum.name}:`, e.message);
+            ticketThread = await findTicketThread(forum, ticketKey);
+            if (ticketThread) {
+                userForum = forum;
+                logger.debug(`Tier 3 success: Found ticket thread in forum: ${forum.name}`);
+                break;
             }
         }
     }
@@ -120,35 +110,9 @@ async function findUserForum(category, discordUserId, discordUser, ticketKey) {
     return { userForum, ticketThread };
 }
 
-/**
- * Find ticket thread within a forum (searches both active and archived)
- * @param {import('discord.js').ForumChannel} forum - Forum to search
- * @param {string} ticketKey - Jira ticket key
- * @returns {Promise<import('discord.js').ThreadChannel|null>}
- */
-async function findTicketThread(forum, ticketKey) {
-    if (!forum) {
-        return null;
-    }
-
-    try {
-        const activeThreads = await forum.threads.fetchActive();
-        let ticketThread = activeThreads.threads.find(t => t.name.startsWith(ticketKey));
-
-        if (!ticketThread) {
-            const archivedThreads = await forum.threads.fetchArchived();
-            ticketThread = archivedThreads.threads.find(t => t.name.startsWith(ticketKey));
-        }
-
-        return ticketThread || null;
-    } catch (e) {
-        logger.debug(`Error finding ticket thread ${ticketKey} in forum ${forum.name}:`, e.message);
-        return null;
-    }
-}
-
 module.exports = {
     lookupDiscordUser,
     findUserForum,
+    // Re-exported from threadService for backward compatibility
     findTicketThread
 };

@@ -7,6 +7,7 @@ const { EMOJIS, JIRA_STATUS, COLORS, TIMEOUTS, FORUM } = require('./src/utils/co
 const { extractTicketKey } = require('./src/utils/validators');
 const { parseJiraDescription } = require('./src/services/jiraParserService');
 const userLookupService = require('./src/services/userLookupService');
+const threadService = require('./src/services/threadService');
 
 const logger = createLogger('Bot');
 const {
@@ -202,20 +203,12 @@ async function handleClaimTicket(reaction, user, jiraTicketKey, thread) {
             );
 
             // Delete the unassigned thread after a short delay
-            setTimeout(async () => {
-                try {
-                    await thread.delete('Ticket claimed - moved to working tickets');
-                    logger.info(`🗑️ Deleted unassigned thread for ${jiraTicketKey}`);
-                } catch (e) {
-                    logger.error('Could not delete unassigned thread:', e);
-                    // Fallback to archive if delete fails
-                    try {
-                        await thread.setArchived(true);
-                    } catch (e2) {
-                        logger.error('Could not archive thread either:', e2);
-                    }
-                }
-            }, TIMEOUTS.THREAD_DELETE_LONG);
+            threadService.deleteThreadWithDelay(
+                thread,
+                'Ticket claimed - moved to working tickets',
+                TIMEOUTS.THREAD_DELETE_LONG,
+                true // fallbackToArchive
+            );
 
             logger.info(`✅ Ticket ${jiraTicketKey} claimed by ${user.tag}`);
         } else {
@@ -292,14 +285,11 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
                 }
 
                 if (ticketThread) {
-                    setTimeout(async () => {
-                        try {
-                            await ticketThread.delete('Task completed - moved to completed tasks');
-                            logger.info(`🗑️ Deleted working ticket thread for ${jiraTicketKey}`);
-                        } catch (e) {
-                            logger.error('Could not delete working ticket thread:', e);
-                        }
-                    }, TIMEOUTS.THREAD_DELETE_SHORT);
+                    threadService.deleteThreadWithDelay(
+                        ticketThread,
+                        'Task completed - moved to completed tasks',
+                        TIMEOUTS.THREAD_DELETE_SHORT
+                    );
                 }
             }
 
@@ -307,14 +297,11 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
             await createCompletedTaskThread(guild, jiraTicketKey, result, user);
 
             // Delete the review thread
-            setTimeout(async () => {
-                try {
-                    await thread.delete('Task approved - moved to completed tasks');
-                    logger.info(`🗑️ Deleted review thread for ${jiraTicketKey}`);
-                } catch (e) {
-                    logger.error('Could not delete review thread:', e);
-                }
-            }, TIMEOUTS.THREAD_DELETE_LONG);
+            threadService.deleteThreadWithDelay(
+                thread,
+                'Task approved - moved to completed tasks',
+                TIMEOUTS.THREAD_DELETE_LONG
+            );
         } else {
             await thread.send({
                 content: `❌ Could not approve ticket: ${result.error || 'Unknown error'}`,
@@ -406,14 +393,11 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
             }
 
             // Delete the review thread (result is pushed to working thread)
-            setTimeout(async () => {
-                try {
-                    await thread.delete('Review denied - feedback sent to working thread');
-                    logger.info(`🗑️ Deleted review thread for ${jiraTicketKey} (denied)`);
-                } catch (e) {
-                    logger.error('Could not delete review thread:', e);
-                }
-            }, TIMEOUTS.THREAD_DELETE_SHORT);
+            threadService.deleteThreadWithDelay(
+                thread,
+                'Review denied - feedback sent to working thread',
+                TIMEOUTS.THREAD_DELETE_SHORT
+            );
         } else {
             await thread.send({
                 content: `❌ Could not deny ticket: ${result.error || 'Unknown error'}`,
