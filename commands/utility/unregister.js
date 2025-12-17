@@ -1,6 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { n8nBaseUrl, webhooks } = require('../../config.json');
+const config = require('../../src/config');
 const { createLogger } = require('../../src/utils/logger');
+
+const { n8nBaseUrl, webhooks } = config;
 
 const logger = createLogger('Unregister');
 

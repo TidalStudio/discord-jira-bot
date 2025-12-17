@@ -36,7 +36,10 @@ const config = {
     webhooks: {
         assignTicket: '/webhook/assign-ticket',
         registerUser: '/webhook/register-user',
-        moveTicket: '/webhook/move-ticket'
+        moveTicket: '/webhook/move-ticket',
+        lookupUser: '/webhook/lookup-user',
+        quitTicket: '/webhook/quit-ticket',
+        getUserTasks: '/webhook/get-user-tasks'
     },
     channels: {
         codeUnassigned: process.env.CHANNEL_CODE_UNASSIGNED,
