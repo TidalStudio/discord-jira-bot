@@ -6,6 +6,7 @@ const { createLogger } = require('./src/utils/logger');
 const { EMOJIS, JIRA_STATUS, COLORS, TIMEOUTS, FORUM } = require('./src/utils/constants');
 const { extractTicketKey } = require('./src/utils/validators');
 const { parseJiraDescription } = require('./src/services/jiraParserService');
+const userLookupService = require('./src/services/userLookupService');
 
 const logger = createLogger('Bot');
 const {
@@ -267,100 +268,29 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread) {
                 allowedMentions: { users: [user.id] }
             });
 
-            // Find the assignee's Discord user via their Jira email
-            const assigneeEmail = result.assignee?.emailAddress;
-            logger.debug(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
-            
-            let discordUser = null;
-            let discordUserId = null;
-            
-            if (assigneeEmail) {
-                try {
-                    const lookupResponse = await fetch(`${config.n8nBaseUrl}/webhook/lookup-user`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ jiraEmail: assigneeEmail })
-                    });
-                    const lookupResult = await lookupResponse.json();
-                    logger.debug(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
-                    if (lookupResult.discordId) {
-                        discordUserId = lookupResult.discordId;
-                        discordUser = await guild.members.fetch(discordUserId).catch((e) => {
-                            logger.debug(`Could not fetch Discord member ${discordUserId}:`, e.message);
-                            return null;
-                        });
-                    }
-                } catch (e) {
-                    logger.debug('Could not lookup Discord user from Jira email:', e.message);
-                }
-            } else {
-                logger.debug('No email address in assignee data');
-            }
-            
+            // Find the assignee's Discord user and their forum
+            const { discordUserId, discordUser } = await userLookupService.lookupDiscordUser(
+                guild,
+                result.assignee?.emailAddress
+            );
+
             const workingCategory = guild.channels.cache.get(config.categories.workingTickets);
-            let userForum = null;
             let ticketThread = null;
-            
+
             if (workingCategory) {
-                // Primary method: Find forum by Discord username
-                if (discordUser) {
-                    const assigneeForumName = `tasks-${discordUser.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-                    logger.debug(`Looking for forum by username: ${assigneeForumName}`);
-                    userForum = workingCategory.children?.cache.find(
-                        ch => ch.name === assigneeForumName && ch.type === ChannelType.GuildForum
-                    );
-                }
-                
-                // Backup method: Find forum by permission overwrites (user has ViewChannel permission)
-                if (!userForum && discordUserId) {
-                    logger.debug(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
-                    userForum = workingCategory.children?.cache.find(ch => {
-                        if (ch.type !== ChannelType.GuildForum) return false;
-                        const perms = ch.permissionOverwrites.cache.get(discordUserId);
-                        return perms && perms.allow.has(PermissionFlagsBits.ViewChannel);
-                    });
-                    if (userForum) {
-                        logger.debug(`Found forum via permissions: ${userForum.name}`);
-                    }
-                }
-                
-                // Last resort: Search ALL forums in the category for a thread with this ticket key
-                if (!userForum) {
-                    logger.debug(`User lookup failed, searching all forums for ticket thread: ${jiraTicketKey}`);
-                    const allForums = workingCategory.children?.cache.filter(ch => ch.type === ChannelType.GuildForum);
-                    
-                    for (const [, forum] of allForums) {
-                        try {
-                            const activeThreads = await forum.threads.fetchActive();
-                            const archivedThreads = await forum.threads.fetchArchived();
-                            
-                            ticketThread = activeThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                            if (!ticketThread) {
-                                ticketThread = archivedThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                            }
-                            
-                            if (ticketThread) {
-                                userForum = forum;
-                                logger.debug(`Found ticket thread in forum: ${forum.name}`);
-                                break;
-                            }
-                        } catch (e) {
-                            logger.debug(`Error searching forum ${forum.name}:`, e.message);
-                        }
-                    }
-                }
-                
+                const { userForum, ticketThread: foundThread } = await userLookupService.findUserForum(
+                    workingCategory,
+                    discordUserId,
+                    discordUser,
+                    jiraTicketKey
+                );
+                ticketThread = foundThread;
+
+                // If we found forum but not thread via Tier 3, search for thread
                 if (userForum && !ticketThread) {
-                    // Fetch threads if we found forum but not thread yet
-                    const activeThreads = await userForum.threads.fetchActive();
-                    const archivedThreads = await userForum.threads.fetchArchived();
-                    
-                    ticketThread = activeThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                    if (!ticketThread) {
-                        ticketThread = archivedThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                    }
+                    ticketThread = await userLookupService.findTicketThread(userForum, jiraTicketKey);
                 }
-                
+
                 if (ticketThread) {
                     setTimeout(async () => {
                         try {
@@ -427,104 +357,31 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread) {
         const result = await response.json();
         
         if (result.success) {
-            // Find the assignee's Discord user via their Jira email
-            const assigneeEmail = result.assignee?.emailAddress;
-            logger.debug(`Assignee info from Jira:`, JSON.stringify(result.assignee, null, 2));
-            
-            let discordUser = null;
-            let discordUserId = null;
-            
-            if (assigneeEmail) {
-                // Look up Discord user by Jira email using the lookup webhook
-                try {
-                    const lookupResponse = await fetch(`${config.n8nBaseUrl}/webhook/lookup-user`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ jiraEmail: assigneeEmail })
-                    });
-                    const lookupResult = await lookupResponse.json();
-                    logger.debug(`Lookup result for ${assigneeEmail}:`, JSON.stringify(lookupResult, null, 2));
-                    if (lookupResult.discordId) {
-                        discordUserId = lookupResult.discordId;
-                        discordUser = await guild.members.fetch(discordUserId).catch((e) => {
-                            logger.debug(`Could not fetch Discord member ${discordUserId}:`, e.message);
-                            return null;
-                        });
-                    }
-                } catch (e) {
-                    logger.debug('Could not lookup Discord user from Jira email:', e.message);
-                }
-            } else {
-                logger.debug('No email address in assignee data');
-            }
-            
+            // Find the assignee's Discord user and their forum
+            const { discordUserId, discordUser } = await userLookupService.lookupDiscordUser(
+                guild,
+                result.assignee?.emailAddress
+            );
+
             const workingCategory = guild.channels.cache.get(config.categories.workingTickets);
-            let userForum = null;
-            let ticketThread = null;
-            
+
             if (workingCategory) {
-                // Primary method: Find forum by Discord username
-                if (discordUser) {
-                    const assigneeForumName = `tasks-${discordUser.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-                    logger.debug(`Looking for forum by username: ${assigneeForumName}`);
-                    userForum = workingCategory.children?.cache.find(
-                        ch => ch.name === assigneeForumName && ch.type === ChannelType.GuildForum
-                    );
-                }
-                
-                // Backup method: Find forum by permission overwrites (user has ViewChannel permission)
-                if (!userForum && discordUserId) {
-                    logger.debug(`Username lookup failed, trying permission-based lookup for user ID: ${discordUserId}`);
-                    userForum = workingCategory.children?.cache.find(ch => {
-                        if (ch.type !== ChannelType.GuildForum) return false;
-                        const perms = ch.permissionOverwrites.cache.get(discordUserId);
-                        return perms && perms.allow.has(PermissionFlagsBits.ViewChannel);
-                    });
-                    if (userForum) {
-                        logger.debug(`Found forum via permissions: ${userForum.name}`);
-                    }
-                }
-                
-                // Last resort: Search ALL forums in the category for a thread with this ticket key
-                if (!userForum) {
-                    logger.debug(`User lookup failed, searching all forums for ticket thread: ${jiraTicketKey}`);
-                    const allForums = workingCategory.children?.cache.filter(ch => ch.type === ChannelType.GuildForum);
-                    
-                    for (const [, forum] of allForums) {
-                        try {
-                            const activeThreads = await forum.threads.fetchActive();
-                            const archivedThreads = await forum.threads.fetchArchived();
-                            
-                            ticketThread = activeThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                            if (!ticketThread) {
-                                ticketThread = archivedThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                            }
-                            
-                            if (ticketThread) {
-                                userForum = forum;
-                                logger.debug(`Found ticket thread in forum: ${forum.name}`);
-                                break;
-                            }
-                        } catch (e) {
-                            logger.debug(`Error searching forum ${forum.name}:`, e.message);
-                        }
-                    }
-                }
-                
+                const { userForum, ticketThread: foundThread } = await userLookupService.findUserForum(
+                    workingCategory,
+                    discordUserId,
+                    discordUser,
+                    jiraTicketKey
+                );
+                let ticketThread = foundThread;
+
                 if (userForum) {
                     logger.debug(`Found working forum: ${userForum.name}`);
-                    
+
                     // If we didn't already find the thread in the last-resort search, find it now
                     if (!ticketThread) {
-                        const activeThreads = await userForum.threads.fetchActive();
-                        const archivedThreads = await userForum.threads.fetchArchived();
-                        
-                        ticketThread = activeThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                        if (!ticketThread) {
-                            ticketThread = archivedThreads.threads.find(t => t.name.startsWith(jiraTicketKey));
-                        }
+                        ticketThread = await userLookupService.findTicketThread(userForum, jiraTicketKey);
                     }
-                    
+
                     if (ticketThread) {
                         logger.debug(`Found ticket thread: ${ticketThread.name}`);
                         // Unarchive if needed
