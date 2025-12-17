@@ -2,60 +2,101 @@
 
 This integration connects your Jira project (KAN) to Discord, providing:
 1. **Automatic ticket notifications** in Discord channels based on labels
-2. **Reaction-based ticket assignment** - react with ✅ to assign a ticket to yourself
+2. **Reaction-based ticket assignment** - react with checkmark to claim a ticket
 3. **User registration** via `/register` slash command
+4. **Task workflow management** - submit for review, PM approval/denial, completion tracking
 
 ## Architecture Overview
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │     Jira        │────▶│      n8n        │────▶│    Discord      │
-│  (Webhooks)     │     │  (3 workflows)  │     │  (Webhooks)     │
+│  (Webhooks)     │     │  (Workflows)    │     │     Bot         │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
-                              │
-                              ▼
-┌─────────────────┐     ┌─────────────────┐
-│  Discord Bot    │────▶│ JSON File Store │
-│ (Reactions +    │     │ (User Mappings) │
-│  Commands)      │     └─────────────────┘
-└─────────────────┘
 ```
 
-## Components
+### Project Structure
 
-### 1. n8n Workflows
+```
+discord-bot/
+├── index.js              # Bootstrap and client setup
+├── deploy-commands.js    # Slash command deployment
+├── commands/
+│   └── utility/          # Slash commands
+├── src/
+│   ├── config.js         # Configuration management
+│   ├── services/         # Business logic services
+│   ├── handlers/         # Event handlers
+│   ├── state/            # State management
+│   └── utils/            # Utilities and helpers
+└── tests/                # Unit tests
+```
 
-| Workflow | ID | Purpose |
-|----------|-----|---------|
-| Jira to Discord - Ticket Notifications | `vmEIbMH0HMiR7yS9` | Routes Jira events to Discord channels |
-| Discord User Registration | `pd9iUuO5OzHG0Odr` | Handles `/register`, `/unregister`, `/whoami` |
-| Discord Reaction - Assign Jira Ticket | `vN4Rs1XFOCJJ7zey` | Assigns tickets when users react with ✅ |
+## Environment Variables
 
-### 2. Discord Bot
+Copy `.env.example` to `.env` and configure:
 
-Located in `/home/claude/discord-bot/`
+### Required
 
-**Features:**
-- Listens for ✅ reactions on ticket messages
-- Handles slash commands (`/register`, `/unregister`, `/whoami`)
-- Forwards events to n8n webhooks
+| Variable | Description |
+|----------|-------------|
+| `DISCORD_TOKEN` | Bot authentication token from Discord Developer Portal |
+| `DISCORD_CLIENT_ID` | Application ID from Discord Developer Portal |
+| `DISCORD_GUILD_ID` | Server ID where the bot operates |
 
-### 3. Discord Webhooks
+### Optional
 
-| Channel | Webhook URL |
+| Variable | Description |
+|----------|-------------|
+| `N8N_BASE_URL` | n8n instance URL for webhook calls |
+| `JIRA_BASE_URL` | Jira instance URL for ticket links |
+| `CHANNEL_CODE_UNASSIGNED` | Forum channel ID for code tickets |
+| `CHANNEL_ART_UNASSIGNED` | Forum channel ID for art tickets |
+| `CHANNEL_AUDIO_UNASSIGNED` | Forum channel ID for audio tickets |
+| `CHANNEL_TASKS_FOR_REVIEW` | Forum channel ID for PM review queue |
+| `CHANNEL_TICKET_NOTIFS` | Channel ID for ticket notifications |
+| `CATEGORY_WORKING_TICKETS` | Category ID for user working ticket forums |
+| `CATEGORY_COMPLETED_TASKS` | Category ID for completed task threads |
+| `ROLE_PM` | Role ID for Project Managers |
+| `LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` |
+
+## Service Layer
+
+| Service | Purpose |
+|---------|---------|
+| `forumService` | Manages Discord forum and thread creation for tasks |
+| `threadService` | Thread search and lifecycle operations |
+| `userLookupService` | 3-tier Discord user discovery (username, permissions, thread search) |
+| `n8nService` | Centralized n8n webhook client with retry logic |
+| `jiraParserService` | Converts Jira descriptions to Discord markdown |
+| `taskManagementService` | Task lifecycle orchestration (review, approve, deny, quit) |
+
+## Discord Commands
+
+### User Registration
+
+| Command | Description |
 |---------|-------------|
-| Code Tickets | `https://discord.com/api/webhooks/1448023647204675585/crPA6...` |
-| Art Tickets | `https://discord.com/api/webhooks/1448023834274959453/hMXKO...` |
-| Audio Tickets | `https://discord.com/api/webhooks/1448023907519955066/BBGp7...` |
-| All Tickets | `https://discord.com/api/webhooks/1448024108616122459/q-MaO...` |
+| `/register jira_email:<email>` | Link your Discord to your Jira account |
+| `/unregister` | Unlink your Discord from Jira |
+| `/whoami` | Check your current registration status |
+
+### Task Management
+
+| Command | Description |
+|---------|-------------|
+| `/task review` | Submit current task for PM review |
+| `/task done` | Mark task as done (PM only) |
+| `/task deny reason:<text>` | Deny task review with feedback (PM only) |
+| `/task quit` | Unassign yourself from a task |
+| `/tasks` | List your assigned tickets |
+| `/tasks status:<filter>` | Filter by status: `todo`, `in_progress`, `in_review`, `done` |
 
 ## Setup Instructions
 
 ### Step 1: Install and Run Discord Bot
 
 ```bash
-cd /home/claude/discord-bot
-
 # Install dependencies
 npm install
 
@@ -66,18 +107,12 @@ npm run deploy
 npm start
 ```
 
-### Step 2: Activate n8n Workflows
+### Step 2: Configure n8n Workflows
 
-Go to your n8n instance at `https://fe73d70d9a56.ngrok-free.app` and:
-
-1. Open each workflow
-2. **Configure Jira credentials** in the "Jira to Discord - Ticket Notifications" workflow:
-   - Click on the "Jira Trigger" node
-   - Add your Jira Cloud credentials (email + API token)
-3. **Configure Jira credentials** in the "Discord Reaction - Assign Jira Ticket" workflow:
-   - Click on the "Assign Jira Ticket" node
-   - Add your Jira Cloud credentials
-4. **Activate all three workflows** by toggling them ON
+1. Import the workflow templates into your n8n instance
+2. Configure Jira credentials in the Jira-related nodes
+3. Update webhook URLs to point to your n8n instance
+4. Activate all workflows
 
 ### Step 3: Test the Integration
 
@@ -85,40 +120,52 @@ Go to your n8n instance at `https://fe73d70d9a56.ngrok-free.app` and:
    - In Discord, type `/register jira_email:your@email.com`
    - The bot should confirm registration
 
-2. **Create a test ticket in Jira:**
-   - Create a ticket in the KAN project
-   - Add a label: `code`, `art`, or `audio`
-   - The ticket should appear in the corresponding Discord channel(s)
-
-3. **Assign via reaction:**
-   - React to a ticket message with ✅
+2. **Claim a ticket:**
+   - React to an unassigned ticket thread with checkmark
    - The ticket should be assigned to you in Jira
+   - A private task thread is created in your user forum
+
+3. **Submit for review:**
+   - Use `/task review` in your task thread
+   - Task moves to the PM review forum
 
 ## Ticket Routing Logic
 
 | Label | Channels |
 |-------|----------|
-| `code` | #code-tickets, #all-tickets |
-| `art` | #art-tickets, #all-tickets |
-| `audio` | #audio-tickets, #all-tickets |
-| No label | #all-tickets only |
-| Multiple labels | Each matching channel + #all-tickets |
+| `code` | #code-tickets |
+| `art` | #art-tickets |
+| `audio` | #audio-tickets |
 
-## Discord Commands
+## Running Tests
 
-| Command | Description |
-|---------|-------------|
-| `/register jira_email:<email>` | Link your Discord to your Jira account |
-| `/unregister` | Unlink your Discord from Jira |
-| `/whoami` | Check your current registration status |
+```bash
+# Run test suite
+npm test
 
-## File Locations
+# Run with coverage report
+npm run test:coverage
+```
 
-| File | Purpose |
-|------|---------|
-| `/home/claude/discord-bot/` | Discord bot source code |
-| `/home/claude/discord-bot/config.json` | Bot configuration (token, n8n URLs) |
-| `/home/claude/discord-jira-mappings.json` | User registration mappings |
+**Coverage requirement: 80%** - All new features must include tests maintaining this threshold.
+
+## Contributing
+
+### Code Style
+- Follow existing patterns in the codebase
+- Use the service layer for business logic
+- Keep handlers thin - delegate to services
+
+### Testing Requirements
+- All new features require unit tests
+- Maintain 80% code coverage minimum
+- Test edge cases and error handling
+
+### PR Process
+1. Create a feature branch from `main`
+2. Write tests for your changes
+3. Ensure all tests pass and coverage is maintained
+4. Submit PR with clear description of changes
 
 ## Troubleshooting
 
@@ -132,22 +179,18 @@ Go to your n8n instance at `https://fe73d70d9a56.ngrok-free.app` and:
 - Ensure labels are exactly `code`, `art`, or `audio` (case-insensitive)
 
 ### Assignment failing
-- Verify the user's Jira email is correct
+- Verify the user's Jira email is correct via `/whoami`
 - Check that the user has permission to be assigned tickets in Jira
 - Ensure the Jira API credentials in n8n are valid
+- Check `.env` configuration is correct
 
-## Webhook Paths
-
-The n8n webhooks the Discord bot calls:
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/webhook/assign-ticket` | POST | Assign ticket to user |
-| `/webhook/register-user` | POST/DELETE/GET | User registration |
+### Commands not working
+- Ensure commands are deployed: `npm run deploy`
+- Check bot has slash command permissions in the server
 
 ## Security Note
 
-⚠️ **Important:** The `config.json` file contains your Discord bot token. Keep this file secure and never commit it to public repositories.
+The `.env` file contains sensitive credentials including your Discord bot token. Keep this file secure and never commit it to version control. The `.gitignore` is configured to exclude it.
 
 ---
 
