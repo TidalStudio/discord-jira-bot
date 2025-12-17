@@ -20,7 +20,7 @@ jest.mock('../../src/utils/logger', () => ({
 }));
 
 const { ChannelType, createMockThread } = require('../../__mocks__/discord.js');
-const { handleClaimTicket, handleApproveTicket, handleDenyTicket } = require('../../src/handlers/ticketHandlers');
+const { handleClaimTicket, handleApproveTicket, handleDenyTicket, handleSubmitForReview } = require('../../src/handlers/ticketHandlers');
 const { handleReaction } = require('../../src/handlers/reactionHandler');
 
 describe('reactionHandler', () => {
@@ -36,6 +36,9 @@ describe('reactionHandler', () => {
         artUnassigned: 'art-unassigned-123',
         audioUnassigned: 'audio-unassigned-123',
         tasksForReview: 'review-forum-123'
+      },
+      categories: {
+        workingTickets: 'working-category-123'
       }
     };
 
@@ -326,6 +329,77 @@ describe('reactionHandler', () => {
       // Deny on unassigned should do nothing
       expect(handleClaimTicket).not.toHaveBeenCalled();
       expect(handleDenyTicket).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('submit for review routing', () => {
+    test('should route clipboard emoji in working tickets to handleSubmitForReview', async () => {
+      const thread = {
+        type: ChannelType.PublicThread,
+        name: 'KAN-123: Test',
+        parentId: 'user-forum-123',
+        parent: {
+          parentId: 'working-category-123'
+        }
+      };
+      const reaction = createMockReaction({ channel: thread, emojiName: '📋' });
+      const user = createMockUser();
+
+      await handleReaction(reaction, user, mockClient, mockConfig);
+
+      expect(handleSubmitForReview).toHaveBeenCalledWith(
+        reaction, user, 'KAN-123', thread, mockConfig
+      );
+      expect(handleClaimTicket).not.toHaveBeenCalled();
+    });
+
+    test('should handle "clipboard" emoji name variant', async () => {
+      const thread = {
+        type: ChannelType.PublicThread,
+        name: 'KAN-123: Test',
+        parentId: 'user-forum-123',
+        parent: {
+          parentId: 'working-category-123'
+        }
+      };
+      const reaction = createMockReaction({ channel: thread, emojiName: 'clipboard' });
+      const user = createMockUser();
+
+      await handleReaction(reaction, user, mockClient, mockConfig);
+
+      expect(handleSubmitForReview).toHaveBeenCalled();
+    });
+
+    test('should not route clipboard emoji outside working tickets category', async () => {
+      const thread = {
+        type: ChannelType.PublicThread,
+        name: 'KAN-123: Test',
+        parentId: 'other-forum-123',
+        parent: {
+          parentId: 'other-category-123'
+        }
+      };
+      const reaction = createMockReaction({ channel: thread, emojiName: '📋' });
+      const user = createMockUser();
+
+      await handleReaction(reaction, user, mockClient, mockConfig);
+
+      expect(handleSubmitForReview).not.toHaveBeenCalled();
+    });
+
+    test('should not route clipboard emoji when parent is null', async () => {
+      const thread = {
+        type: ChannelType.PublicThread,
+        name: 'KAN-123: Test',
+        parentId: 'user-forum-123',
+        parent: null
+      };
+      const reaction = createMockReaction({ channel: thread, emojiName: '📋' });
+      const user = createMockUser();
+
+      await handleReaction(reaction, user, mockClient, mockConfig);
+
+      expect(handleSubmitForReview).not.toHaveBeenCalled();
     });
   });
 });

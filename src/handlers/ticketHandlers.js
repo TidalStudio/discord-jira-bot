@@ -11,6 +11,7 @@ const { PermissionError, WebhookError } = require('../utils/errors');
 const userLookupService = require('../services/userLookupService');
 const threadService = require('../services/threadService');
 const forumService = require('../services/forumService');
+const taskManagementService = require('../services/taskManagementService');
 
 const logger = createLogger('TicketHandlers');
 
@@ -338,8 +339,68 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread, config) {
     }
 }
 
+/**
+ * Handle user submitting their task for PM review via clipboard reaction
+ * @param {import('discord.js').MessageReaction} reaction - The reaction object
+ * @param {import('discord.js').User} user - The user who reacted
+ * @param {string} jiraTicketKey - The Jira ticket key
+ * @param {import('discord.js').ThreadChannel} thread - The thread channel
+ * @param {Object} config - Bot configuration
+ */
+async function handleSubmitForReview(reaction, user, jiraTicketKey, thread, config) {
+    // Always remove reaction first to allow re-submission
+    try {
+        await reaction.users.remove(user.id);
+    } catch (error) {
+        logger.debug(`Could not remove reaction: ${error.message}`);
+    }
+
+    // Verify ownership: thread.parent should be user's forum
+    const forumChannel = thread.parent;
+    if (!forumChannel) {
+        logger.debug(`No parent forum found for thread ${thread.id}`);
+        return;
+    }
+
+    const expectedForumName = `tasks-${user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+    if (forumChannel.name !== expectedForumName) {
+        // Non-assignee: silently ignore
+        logger.debug(`User ${user.tag} is not owner of forum ${forumChannel.name}`);
+        return;
+    }
+
+    logger.info(`User ${user.tag} submitting ticket ${jiraTicketKey} for review`);
+
+    try {
+        const result = await taskManagementService.submitForReview({
+            ticketKey: jiraTicketKey,
+            userId: user.id,
+            userTag: user.tag,
+            guild: thread.guild
+        });
+
+        if (!result.success) {
+            await thread.send({
+                content: `<@${user.id}> Could not submit for review: ${result.error}`,
+                allowedMentions: { users: [user.id] }
+            });
+            return;
+        }
+
+        await thread.send({ content: `Submitted for review! PMs have been notified.` });
+        logger.info(`Ticket ${jiraTicketKey} submitted for review by ${user.tag}`);
+    } catch (error) {
+        logger.error(`Error submitting ticket ${jiraTicketKey} for review:`, error);
+        await thread.send({
+            content: `<@${user.id}> Error submitting for review: ${error.message}`,
+            allowedMentions: { users: [user.id] }
+        });
+    }
+}
+
 module.exports = {
     handleClaimTicket,
     handleApproveTicket,
-    handleDenyTicket
+    handleDenyTicket,
+    handleSubmitForReview
 };

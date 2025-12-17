@@ -6,6 +6,19 @@
 jest.mock('../../src/services/userLookupService');
 jest.mock('../../src/services/threadService');
 jest.mock('../../src/services/forumService');
+jest.mock('../../src/services/taskManagementService');
+jest.mock('../../src/config', () => ({
+  channels: {
+    tasksForReview: 'review-forum-123'
+  },
+  categories: {
+    workingTickets: 'working-category-123'
+  },
+  roles: {
+    pm: 'pm-role-123'
+  },
+  jiraBaseUrl: 'https://jira.example.com'
+}));
 jest.mock('../../src/utils/logger', () => ({
   createLogger: () => ({
     debug: jest.fn(),
@@ -28,11 +41,13 @@ const {
 const userLookupService = require('../../src/services/userLookupService');
 const threadService = require('../../src/services/threadService');
 const forumService = require('../../src/services/forumService');
+const taskManagementService = require('../../src/services/taskManagementService');
 
 const {
   handleClaimTicket,
   handleApproveTicket,
-  handleDenyTicket
+  handleDenyTicket,
+  handleSubmitForReview
 } = require('../../src/handlers/ticketHandlers');
 
 describe('ticketHandlers', () => {
@@ -745,6 +760,162 @@ describe('ticketHandlers', () => {
 
       // Should still delete the review thread
       expect(threadService.deleteThreadWithDelay).toHaveBeenCalled();
+    });
+  });
+
+  describe('handleSubmitForReview', () => {
+    function createMockReactionWithRemove() {
+      return {
+        emoji: { name: '📋' },
+        users: {
+          remove: jest.fn().mockResolvedValue(undefined)
+        }
+      };
+    }
+
+    test('should submit ticket for review when user owns the forum', async () => {
+      taskManagementService.submitForReview.mockResolvedValue({
+        success: true,
+        summary: 'Test Task'
+      });
+
+      const mockForum = createMockForum({ name: 'tasks-testuser' });
+      const thread = createMockThread({ name: 'KAN-123: Test' });
+      thread.guild = mockGuild;
+      thread.parent = mockForum;
+
+      const user = createMockUser({ username: 'testuser' });
+      const reaction = createMockReactionWithRemove();
+
+      await handleSubmitForReview(reaction, user, 'KAN-123', thread, mockConfig);
+
+      expect(reaction.users.remove).toHaveBeenCalledWith('user-123');
+      expect(taskManagementService.submitForReview).toHaveBeenCalledWith({
+        ticketKey: 'KAN-123',
+        userId: 'user-123',
+        userTag: 'testuser#1234',
+        guild: mockGuild
+      });
+      expect(thread.send).toHaveBeenCalledWith({
+        content: 'Submitted for review! PMs have been notified.'
+      });
+    });
+
+    test('should silently ignore when user does not own the forum', async () => {
+      const mockForum = createMockForum({ name: 'tasks-otheruser' });
+      const thread = createMockThread({ name: 'KAN-123: Test' });
+      thread.guild = mockGuild;
+      thread.parent = mockForum;
+
+      const user = createMockUser({ username: 'testuser' });
+      const reaction = createMockReactionWithRemove();
+
+      await handleSubmitForReview(reaction, user, 'KAN-123', thread, mockConfig);
+
+      expect(reaction.users.remove).toHaveBeenCalledWith('user-123');
+      expect(taskManagementService.submitForReview).not.toHaveBeenCalled();
+      expect(thread.send).not.toHaveBeenCalled();
+    });
+
+    test('should silently ignore when thread has no parent forum', async () => {
+      const thread = createMockThread({ name: 'KAN-123: Test' });
+      thread.guild = mockGuild;
+      thread.parent = null;
+
+      const user = createMockUser();
+      const reaction = createMockReactionWithRemove();
+
+      await handleSubmitForReview(reaction, user, 'KAN-123', thread, mockConfig);
+
+      expect(taskManagementService.submitForReview).not.toHaveBeenCalled();
+    });
+
+    test('should handle service error', async () => {
+      taskManagementService.submitForReview.mockResolvedValue({
+        success: false,
+        error: 'Ticket not in correct status'
+      });
+
+      const mockForum = createMockForum({ name: 'tasks-testuser' });
+      const thread = createMockThread({ name: 'KAN-123: Test' });
+      thread.guild = mockGuild;
+      thread.parent = mockForum;
+
+      const user = createMockUser({ username: 'testuser' });
+      const reaction = createMockReactionWithRemove();
+
+      await handleSubmitForReview(reaction, user, 'KAN-123', thread, mockConfig);
+
+      expect(thread.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('Could not submit for review')
+        })
+      );
+    });
+
+    test('should handle unexpected error', async () => {
+      taskManagementService.submitForReview.mockRejectedValue(new Error('Network error'));
+
+      const mockForum = createMockForum({ name: 'tasks-testuser' });
+      const thread = createMockThread({ name: 'KAN-123: Test' });
+      thread.guild = mockGuild;
+      thread.parent = mockForum;
+
+      const user = createMockUser({ username: 'testuser' });
+      const reaction = createMockReactionWithRemove();
+
+      await handleSubmitForReview(reaction, user, 'KAN-123', thread, mockConfig);
+
+      expect(thread.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('Error submitting for review')
+        })
+      );
+    });
+
+    test('should sanitize username for forum name matching', async () => {
+      taskManagementService.submitForReview.mockResolvedValue({
+        success: true,
+        summary: 'Test Task'
+      });
+
+      // User with special characters
+      const mockForum = createMockForum({ name: 'tasks-testuser123' });
+      const thread = createMockThread({ name: 'KAN-123: Test' });
+      thread.guild = mockGuild;
+      thread.parent = mockForum;
+
+      const user = createMockUser({ username: 'Test_User-123!' });
+      const reaction = createMockReactionWithRemove();
+
+      await handleSubmitForReview(reaction, user, 'KAN-123', thread, mockConfig);
+
+      expect(taskManagementService.submitForReview).toHaveBeenCalled();
+    });
+
+    test('should continue if reaction removal fails', async () => {
+      taskManagementService.submitForReview.mockResolvedValue({
+        success: true,
+        summary: 'Test Task'
+      });
+
+      const mockForum = createMockForum({ name: 'tasks-testuser' });
+      const thread = createMockThread({ name: 'KAN-123: Test' });
+      thread.guild = mockGuild;
+      thread.parent = mockForum;
+
+      const user = createMockUser({ username: 'testuser' });
+      const reaction = {
+        emoji: { name: '📋' },
+        users: {
+          remove: jest.fn().mockRejectedValue(new Error('Permission denied'))
+        }
+      };
+
+      await handleSubmitForReview(reaction, user, 'KAN-123', thread, mockConfig);
+
+      // Should still proceed with submit
+      expect(taskManagementService.submitForReview).toHaveBeenCalled();
     });
   });
 });

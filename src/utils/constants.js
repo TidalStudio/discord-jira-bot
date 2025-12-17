@@ -6,7 +6,8 @@
 // Reaction emojis for claiming/approving/denying tickets
 const EMOJIS = {
     CHECKMARKS: ['✅', '☑️', '✔️', 'white_check_mark', 'ballot_box_with_check', 'heavy_check_mark'],
-    DENY: ['❌', '✖️', '🚫', 'x', 'cross_mark', 'negative_squared_cross_mark']
+    DENY: ['❌', '✖️', '🚫', 'x', 'cross_mark', 'negative_squared_cross_mark'],
+    CLIPBOARD: ['📋', 'clipboard']
 };
 
 // Jira workflow status strings

@@ -9,7 +9,7 @@ const { ChannelType } = require('discord.js');
 const { createLogger } = require('../utils/logger');
 const { EMOJIS } = require('../utils/constants');
 const { extractTicketKey } = require('../utils/validators');
-const { handleClaimTicket, handleApproveTicket, handleDenyTicket } = require('./ticketHandlers');
+const { handleClaimTicket, handleApproveTicket, handleDenyTicket, handleSubmitForReview } = require('./ticketHandlers');
 
 const logger = createLogger('ReactionHandler');
 
@@ -40,8 +40,9 @@ async function handleReaction(reaction, user, client, config) {
 
     const isCheckmark = EMOJIS.CHECKMARKS.includes(emojiName);
     const isDeny = EMOJIS.DENY.includes(emojiName);
+    const isClipboard = EMOJIS.CLIPBOARD.includes(emojiName);
 
-    if (!isCheckmark && !isDeny) return;
+    if (!isCheckmark && !isDeny && !isClipboard) return;
 
     const message = reaction.message;
     const channel = message.channel;
@@ -94,6 +95,12 @@ async function handleReaction(reaction, user, client, config) {
         } else if (isDeny) {
             // PM is denying a ticket
             await handleDenyTicket(reaction, user, jiraTicketKey, channel, config);
+        }
+    } else if (isClipboard) {
+        // Check if thread is in working tickets category
+        const forumChannel = channel.parent;
+        if (forumChannel && forumChannel.parentId === config.categories.workingTickets) {
+            await handleSubmitForReview(reaction, user, jiraTicketKey, channel, config);
         }
     }
 }
