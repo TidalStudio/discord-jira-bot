@@ -114,6 +114,16 @@ async function createTaskThread(forum, ticketData) {
             }
         });
 
+        // Add clipboard reaction to starter message for easy review submission
+        try {
+            const starterMessage = await thread.fetchStarterMessage();
+            if (starterMessage) {
+                await starterMessage.react('📋');
+            }
+        } catch (error) {
+            logger.debug(`Could not add clipboard reaction: ${error.message}`);
+        }
+
         // Post description as separate message
         let descriptionText = 'No description provided.';
         if (description) {
