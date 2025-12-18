@@ -65,6 +65,11 @@ function createMockCollection(entries = []) {
  * @returns {Object} - Mock thread channel
  */
 function createMockThread(options = {}) {
+  const mockStarterMessage = {
+    id: 'starter-message-123',
+    react: jest.fn().mockResolvedValue(undefined)
+  };
+
   return {
     id: options.id || 'thread-123',
     name: options.name || 'Test Thread',
@@ -76,6 +81,7 @@ function createMockThread(options = {}) {
       return Promise.resolve(this);
     }),
     send: jest.fn().mockResolvedValue({ id: 'message-123' }),
+    fetchStarterMessage: jest.fn().mockResolvedValue(mockStarterMessage),
     ...options
   };
 }
