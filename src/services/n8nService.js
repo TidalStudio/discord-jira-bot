@@ -244,10 +244,9 @@ async function lookupUser(jiraEmail) {
  * @returns {Promise<Object>} { success, jiraEmail?, registeredAt?, ...responseData }
  */
 async function lookupUserByDiscordId(discordUserId) {
-    return executeRequest('GET', config.webhooks.registerUser, {
-        queryParams: {
-            discordUserId,
-            action: 'lookup'
+    return executeRequest('POST', config.webhooks.lookupUser, {
+        body: {
+            discordUserId
         }
     });
 }
