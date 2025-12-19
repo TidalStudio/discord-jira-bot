@@ -20,7 +20,7 @@ module.exports = {
                     content: `📋 **Your Registration Status**\n\n` +
                         `**Discord:** ${interaction.user.tag}\n` +
                         `**Jira Email:** \`${result.jiraEmail}\`\n` +
-                        `**Registered:** ${result.registeredAt ? new Date(result.registeredAt).toLocaleString() : 'Unknown'}\n\n` +
+                        `**Registered:** ${result.registeredAt ? `<t:${Math.floor(new Date(result.registeredAt).getTime() / 1000)}:f>` : 'Unknown'}\n\n` +
                         `React with ✅ on Jira ticket messages to assign them to yourself!`
                 });
             } else {
