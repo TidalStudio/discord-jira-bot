@@ -10,6 +10,7 @@ const config = require('../config');
 const { parseJiraDescription } = require('./jiraParserService');
 const { createLogger } = require('../utils/logger');
 const { JIRA_STATUS, COLORS, FORUM } = require('../utils/constants');
+const { splitTextForDiscord } = require('../utils/textSplitter');
 
 const logger = createLogger('ForumService');
 
@@ -120,18 +121,17 @@ async function createTaskThread(forum, ticketData) {
             await starterMessage.react('📋');
         }
 
-        // Post description as separate message
+        // Post description as separate message(s)
         let descriptionText = 'No description provided.';
         if (description) {
             descriptionText = parseJiraDescription(description);
         }
 
-        // Truncate if too long for Discord message
-        if (descriptionText.length > 1900) {
-            descriptionText = descriptionText.substring(0, 1900) + '\n\n*[View full description in Jira]*';
+        // Split into multiple messages if needed
+        const chunks = splitTextForDiscord(descriptionText);
+        for (const chunk of chunks) {
+            await thread.send({ content: chunk });
         }
-
-        await thread.send({ content: descriptionText });
 
         logger.info(`Created task thread ${ticketKey} for user ${userId}`);
         return thread;

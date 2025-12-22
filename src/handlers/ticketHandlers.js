@@ -8,6 +8,7 @@
 const { createLogger } = require('../utils/logger');
 const { JIRA_STATUS, TIMEOUTS } = require('../utils/constants');
 const { PermissionError, WebhookError } = require('../utils/errors');
+const { acquireLock, releaseLock } = require('../state/reactionLock');
 const userLookupService = require('../services/userLookupService');
 const threadService = require('../services/threadService');
 const forumService = require('../services/forumService');
@@ -36,6 +37,12 @@ async function checkPmRole(guild, userId, config) {
  * @param {Object} config - Bot configuration
  */
 async function handleClaimTicket(reaction, user, jiraTicketKey, thread, config) {
+    // Prevent duplicate processing from spam reactions
+    if (!acquireLock(jiraTicketKey, 'claim')) {
+        logger.debug(`Ticket ${jiraTicketKey} already being claimed, ignoring duplicate`);
+        return;
+    }
+
     logger.info(`User ${user.tag} claiming ticket ${jiraTicketKey}`);
 
     try {
@@ -107,6 +114,8 @@ async function handleClaimTicket(reaction, user, jiraTicketKey, thread, config) 
                 allowedMentions: { users: [user.id] }
             });
         }
+    } finally {
+        releaseLock(jiraTicketKey, 'claim');
     }
 }
 
@@ -136,6 +145,12 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread, config
             return;
         }
         throw error;
+    }
+
+    // Prevent duplicate processing from spam reactions
+    if (!acquireLock(jiraTicketKey, 'approve')) {
+        logger.debug(`Ticket ${jiraTicketKey} already being approved, ignoring duplicate`);
+        return;
     }
 
     logger.info(`PM ${user.tag} approving ticket ${jiraTicketKey}`);
@@ -217,6 +232,8 @@ async function handleApproveTicket(reaction, user, jiraTicketKey, thread, config
             logger.error(`Error approving ticket ${jiraTicketKey}:`, error);
             await thread.send({ content: `Error: ${error.message}` });
         }
+    } finally {
+        releaseLock(jiraTicketKey, 'approve');
     }
 }
 
@@ -246,6 +263,12 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread, config) {
             return;
         }
         throw error;
+    }
+
+    // Prevent duplicate processing from spam reactions
+    if (!acquireLock(jiraTicketKey, 'deny')) {
+        logger.debug(`Ticket ${jiraTicketKey} already being denied, ignoring duplicate`);
+        return;
     }
 
     logger.info(`PM ${user.tag} denying ticket ${jiraTicketKey}`);
@@ -336,6 +359,8 @@ async function handleDenyTicket(reaction, user, jiraTicketKey, thread, config) {
             logger.error(`Error denying ticket ${jiraTicketKey}:`, error);
             await thread.send({ content: `Error: ${error.message}` });
         }
+    } finally {
+        releaseLock(jiraTicketKey, 'deny');
     }
 }
 
@@ -369,6 +394,12 @@ async function handleSubmitForReview(reaction, user, jiraTicketKey, thread, conf
         return;
     }
 
+    // Prevent duplicate processing from spam reactions
+    if (!acquireLock(jiraTicketKey, 'review')) {
+        logger.debug(`Ticket ${jiraTicketKey} already being submitted for review, ignoring duplicate`);
+        return;
+    }
+
     logger.info(`User ${user.tag} submitting ticket ${jiraTicketKey} for review`);
 
     try {
@@ -395,6 +426,8 @@ async function handleSubmitForReview(reaction, user, jiraTicketKey, thread, conf
             content: `<@${user.id}> Error submitting for review: ${error.message}`,
             allowedMentions: { users: [user.id] }
         });
+    } finally {
+        releaseLock(jiraTicketKey, 'review');
     }
 }
 

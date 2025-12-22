@@ -360,12 +360,12 @@ describe('forumService', () => {
       expect(mockThread.send).toHaveBeenCalledWith({ content: 'This is the task description' });
     });
 
-    test('should truncate long descriptions', async () => {
+    test('should split long descriptions into multiple messages', async () => {
       const mockThread = createMockThread({});
       const forum = createMockForum();
       forum.threads.create.mockResolvedValue(mockThread);
 
-      // Create a very long description
+      // Create a very long description (over 1900 chars)
       const longDescription = 'A'.repeat(2000);
       parseJiraDescription.mockReturnValue(longDescription);
 
@@ -380,9 +380,12 @@ describe('forumService', () => {
 
       await createTaskThread(forum, ticketData);
 
-      const sentContent = mockThread.send.mock.calls[0][0].content;
-      expect(sentContent.length).toBeLessThanOrEqual(2000);
-      expect(sentContent).toContain('[View full description in Jira]');
+      // Should send multiple messages for long descriptions
+      expect(mockThread.send.mock.calls.length).toBeGreaterThan(1);
+      // Each message should be <= 1900 chars
+      for (const call of mockThread.send.mock.calls) {
+        expect(call[0].content.length).toBeLessThanOrEqual(1900);
+      }
     });
 
     test('should return null when thread creation fails', async () => {

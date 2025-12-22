@@ -40,7 +40,8 @@ const STATUS_EMOJIS = {
 const TIMEOUTS = {
     THREAD_DELETE_SHORT: 2000,
     THREAD_DELETE_MEDIUM: 2500,
-    THREAD_DELETE_LONG: 3000
+    THREAD_DELETE_LONG: 3000,
+    REACTION_LOCK: 30000  // Max lock time for reaction processing
 };
 
 // Forum channel settings
