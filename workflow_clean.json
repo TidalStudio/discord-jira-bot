@@ -1,0 +1,682 @@
+{
+  "name": "Jira to Discord - Unassigned Forum Posts",
+  "nodes": [
+    {
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "E016ebHzDc5PvNrn",
+          "name": "Jira SW Cloud account"
+        }
+      },
+      "id": "jira-trigger",
+      "name": "Jira Trigger",
+      "parameters": {
+        "additionalFields": {
+          "filter": "project = KAN"
+        },
+        "events": [
+          "jira:issue_created",
+          "jira:issue_updated"
+        ]
+      },
+      "position": [
+        0,
+        300
+      ],
+      "type": "n8n-nodes-base.jiraTrigger",
+      "typeVersion": 1.1,
+      "webhookId": "unassigned-forums"
+    },
+    {
+      "id": "process-event",
+      "name": "Process Event",
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst issue = data.issue;\nconst fields = issue.fields;\nconst changelog = data.changelog;\nconst isCreate = data.webhookEvent === 'jira:issue_created';\nconst isUnassigned = !fields.assignee;\nconst labels = (fields.labels || []).map(l => l.toLowerCase());\nconst issueType = fields.issuetype?.name || 'Unknown';\nconst issueUrl = `https://tidalstudios.atlassian.net/browse/${issue.key}`;\n\nconst isEpic = issueType.toLowerCase() === 'epic';\nif (isEpic) {\n  return { action: 'none', reason: 'Epics do not create Discord posts' };\n}\n\nconst forumMap = {\n  'code': '1448045008606461974',\n  'art': '1448045120199987230',\n  'audio': '1448045167503347762'\n};\n\nconst priority = fields.priority?.name || 'None';\nconst categoryLabels = labels.filter(l => ['code', 'art', 'audio'].includes(l));\n\nlet assigneeChanged = false;\nlet labelsChanged = false;\nlet oldLabels = [];\nlet displayRelevantFieldChanged = false;\n\n// Fields that should trigger a Discord update when changed\nconst displayRelevantFields = ['summary', 'description', 'priority', 'status', 'issuetype', 'labels', 'assignee', 'parent'];\n\nif (changelog && changelog.items) {\n  for (const item of changelog.items) {\n    if (item.field === 'assignee') assigneeChanged = true;\n    if (item.field === 'labels') {\n      labelsChanged = true;\n      oldLabels = (item.fromString || '').split(' ').filter(l => l).map(l => l.toLowerCase());\n    }\n    if (displayRelevantFields.includes(item.field)) {\n      displayRelevantFieldChanged = true;\n    }\n  }\n}\n\nconst parentEpic = fields.parent;\nlet epicInfo = null;\nif (parentEpic) {\n  epicInfo = {\n    key: parentEpic.key,\n    summary: parentEpic.fields?.summary || 'Epic',\n    url: `https://tidalstudios.atlassian.net/browse/${parentEpic.key}`\n  };\n}\n\nfunction jiraToDiscord(text) {\n  if (!text) return text;\n  return text\n    .replace(/\\{code:(\\w+)\\}/g, '```$1')\n    .replace(/\\{code\\}/g, '```')\n    .replace(/\\{noformat\\}/g, '```')\n    .replace(/^h1\\.\\s*/gm, '# ')\n    .replace(/^h2\\.\\s*/gm, '## ')\n    .replace(/^h3\\.\\s*/gm, '### ')\n    .replace(/^h4\\.\\s*/gm, '#### ')\n    .replace(/^h5\\.\\s*/gm, '##### ')\n    .replace(/^h6\\.\\s*/gm, '###### ')\n    .replace(/\\[([^\\|\\]]+)\\|([^\\]]+)\\]/g, '[$1]($2)')\n    .replace(/(?<![*\\w])\\*([^*\\n]+?)\\*(?![*\\w])/g, '**$1**')\n    .replace(/\\{\\{([^}]+)\\}\\}/g, '`$1`');\n}\n\nlet description = 'No description provided.';\nif (fields.description && typeof fields.description === 'string') {\n  description = jiraToDiscord(fields.description).substring(0, 1900);\n  if (fields.description.length > 1900) {\n    description += '\\n\\n*[View full description in Jira]*';\n  }\n}\n\nconst embedFields = [\n  { name: 'Type', value: issueType, inline: true },\n  { name: 'Priority', value: priority, inline: true },\n  { name: 'Labels', value: categoryLabels.length > 0 ? categoryLabels.join(', ') : 'None', inline: true }\n];\nif (epicInfo) {\n  embedFields.push({ name: 'Epic', value: `[${epicInfo.key}: ${epicInfo.summary}](${epicInfo.url})`, inline: false });\n}\n\nconst embed = {\n  title: `${issue.key}: ${fields.summary}`,\n  url: issueUrl,\n  color: 3447003,\n  fields: embedFields,\n  footer: { text: 'React with \\u2705 to claim this ticket' }\n};\n\nlet action = 'none';\nlet targetChannels = [];\nlet removeChannels = [];\n\nif (isCreate && isUnassigned && categoryLabels.length > 0) {\n  action = 'create';\n  targetChannels = categoryLabels.map(l => ({ label: l, channelId: forumMap[l] }));\n} else if (!isCreate && isUnassigned && categoryLabels.length > 0) {\n  if (labelsChanged) {\n    const oldCats = oldLabels.filter(l => ['code', 'art', 'audio'].includes(l));\n    const added = categoryLabels.filter(l => !oldCats.includes(l));\n    const removed = oldCats.filter(l => !categoryLabels.includes(l));\n    if (added.length > 0) {\n      action = 'create';\n      targetChannels = added.map(l => ({ label: l, channelId: forumMap[l] }));\n    }\n    if (removed.length > 0) {\n      removeChannels = removed.map(l => ({ label: l, channelId: forumMap[l] }));\n    }\n  } else if (displayRelevantFieldChanged) {\n    // Only update Discord if a display-relevant field changed\n    action = 'update';\n    targetChannels = categoryLabels.map(l => ({ label: l, channelId: forumMap[l] }));\n  }\n  // If no display-relevant field changed, action stays 'none'\n} else if (!isCreate && assigneeChanged && !isUnassigned) {\n  action = 'archive';\n  targetChannels = Object.entries(forumMap).map(([label, channelId]) => ({ label, channelId }));\n}\n\nreturn {\n  action,\n  issueKey: issue.key,\n  issueUrl,\n  summary: fields.summary,\n  description,\n  embed,\n  targetChannels,\n  removeChannels,\n  categoryLabels\n};"
+      },
+      "position": [
+        250,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "check-create",
+      "name": "Check Create",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.action }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "create"
+            }
+          ],
+          "options": {
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        500,
+        300
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "id": "check-update",
+      "name": "Check Update",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.action }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "update"
+            }
+          ],
+          "options": {
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        750,
+        400
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "id": "check-archive",
+      "name": "Check Archive",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.action }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "archive"
+            }
+          ],
+          "options": {
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        1000,
+        500
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "id": "split-create",
+      "name": "Split for Create",
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn input.targetChannels.map(ch => ({ ...input, channelId: ch.channelId, label: ch.label }));"
+      },
+      "position": [
+        750,
+        200
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "create-forum-post",
+      "name": "Create Forum Post",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify({ name: $json.issueKey + ': ' + $json.summary.substring(0, 90), message: { embeds: [$json.embed] } }) }}",
+        "method": "POST",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.channelId }}/threads"
+      },
+      "position": [
+        1000,
+        200
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "post-description",
+      "name": "Post Description",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify({ content: $('Split for Create').item.json.description }) }}",
+        "method": "POST",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.id }}/messages"
+      },
+      "position": [
+        1250,
+        200
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "get-threads-update",
+      "name": "Get Threads for Update",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "url": "https://discord.com/api/v10/guilds/1427303735918592113/threads/active"
+      },
+      "position": [
+        1000,
+        350
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "find-thread-update",
+      "name": "Find Thread to Update",
+      "parameters": {
+        "jsCode": "const threads = $input.first().json.threads || [];\nconst issueKey = $('Process Event').item.json.issueKey;\nconst processData = $('Process Event').item.json;\n\nconst results = [];\nfor (const ch of processData.targetChannels) {\n  const thread = threads.find(t => t.name && t.name.startsWith(issueKey + ':') && t.parent_id === ch.channelId);\n  if (thread) {\n    results.push({\n      ...processData,\n      threadId: thread.id,\n      threadName: thread.name,\n      firstMessageId: thread.id,\n      channelId: ch.channelId\n    });\n  }\n}\nreturn results;"
+      },
+      "position": [
+        1250,
+        350
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "update-embed",
+      "name": "Update Embed",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify({ embeds: [$json.embed] }) }}",
+        "method": "PATCH",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.threadId }}/messages/{{ $json.firstMessageId }}"
+      },
+      "position": [
+        1500,
+        350
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "post-update-notice",
+      "name": "Post Update Notice",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify({ content: $('Find Thread to Update').item.json.description }) }}",
+        "method": "POST",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.channel_id }}/messages"
+      },
+      "position": [
+        2250,
+        250
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "get-threads-archive",
+      "name": "Get Threads for Archive",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "url": "https://discord.com/api/v10/guilds/1427303735918592113/threads/active"
+      },
+      "position": [
+        1250,
+        550
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "find-thread-archive",
+      "name": "Find Thread to Archive",
+      "parameters": {
+        "jsCode": "const threads = $input.first().json.threads || [];\nconst issueKey = $('Process Event').item.json.issueKey;\nconst thread = threads.find(t => t.name && t.name.startsWith(issueKey + ':'));\nif (thread) {\n  return { found: true, threadId: thread.id, threadName: thread.name };\n}\nreturn { found: false };"
+      },
+      "position": [
+        1500,
+        550
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "check-found",
+      "name": "Thread Found?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.found }}",
+              "operator": {
+                "operation": "true",
+                "type": "boolean"
+              }
+            }
+          ],
+          "options": {
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        1750,
+        550
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "archive-thread",
+      "name": "Archive Thread",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "{\"archived\": true}",
+        "method": "PATCH",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.threadId }}"
+      },
+      "position": [
+        2000,
+        500
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "get-thread-messages",
+      "name": "Get Thread Messages",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "GET",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "url": "=https://discord.com/api/v10/channels/{{ $json.threadId }}/messages?limit=10"
+      },
+      "position": [
+        1500,
+        250
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "id": "find-description-message",
+      "name": "Find Description Message",
+      "parameters": {
+        "jsCode": "const messages = $input.first().json;\n// Messages are returned newest-first, so reverse to get chronological order\nconst sorted = [...messages].sort((a, b) => \n  new Date(a.timestamp) - new Date(b.timestamp)\n);\n// Second message is the description (first is the embed)\nconst descriptionMessage = sorted[1];\nreturn {\n  descriptionMessageId: descriptionMessage?.id,\n  threadId: $('Find Thread to Update').item.json.threadId,\n  description: $('Find Thread to Update').item.json.description,\n  issueKey: $('Find Thread to Update').item.json.issueKey,\n  summary: $('Find Thread to Update').item.json.summary\n};"
+      },
+      "position": [
+        1750,
+        250
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "delete-old-description",
+      "name": "Delete Old Description",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "method": "DELETE",
+        "nodeCredentialType": "discordBotApi",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "ignoreResponseCode": false
+        },
+        "url": "=https://discord.com/api/v10/channels/{{ $json.threadId }}/messages/{{ $json.descriptionMessageId }}"
+      },
+      "position": [
+        2000,
+        250
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "continueOnFail": true
+    },
+    {
+      "credentials": {
+        "discordBotApi": {
+          "id": "kufANv2ctmeKTuNt",
+          "name": "Discord Bot account"
+        }
+      },
+      "id": "update-thread-name",
+      "name": "Update Thread Name",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "jsonBody": "={{ JSON.stringify({ name: $json.issueKey + ': ' + $json.summary.substring(0, 90) }) }}",
+        "method": "PATCH",
+        "nodeCredentialType": "discordBotApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "=https://discord.com/api/v10/channels/{{ $json.threadId }}"
+      },
+      "position": [
+        1750,
+        450
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    }
+  ],
+  "connections": {
+    "Check Archive": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Get Threads for Archive",
+            "type": "main"
+          }
+        ],
+        []
+      ]
+    },
+    "Check Create": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Split for Create",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Check Update",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Check Update": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Get Threads for Update",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Check Archive",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Create Forum Post": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Post Description",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Find Thread to Archive": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Thread Found?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Find Thread to Update": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Update Embed",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Get Threads for Archive": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Find Thread to Archive",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Get Threads for Update": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Find Thread to Update",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Jira Trigger": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Process Event",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Process Event": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Check Create",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Split for Create": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Create Forum Post",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Thread Found?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Archive Thread",
+            "type": "main"
+          }
+        ],
+        []
+      ]
+    },
+    "Update Embed": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Get Thread Messages",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "Update Thread Name",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Get Thread Messages": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Find Description Message",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Find Description Message": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Delete Old Description",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Delete Old Description": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Post Update Notice",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Update Thread Name": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Jira Trigger": {
+      "endpoint": "/webhooks/1.0/webhook",
+      "webhookId": "302"
+    }
+  }
+}
