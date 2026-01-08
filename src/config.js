@@ -45,6 +45,7 @@ const config = {
         codeUnassigned: process.env.CHANNEL_CODE_UNASSIGNED,
         artUnassigned: process.env.CHANNEL_ART_UNASSIGNED,
         audioUnassigned: process.env.CHANNEL_AUDIO_UNASSIGNED,
+        writingUnassigned: process.env.CHANNEL_WRITING_UNASSIGNED,
         tasksForReview: process.env.CHANNEL_TASKS_FOR_REVIEW,
         ticketNotifs: process.env.CHANNEL_TICKET_NOTIFS
     },

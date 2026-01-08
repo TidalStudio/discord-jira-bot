@@ -82,7 +82,8 @@ async function handleReaction(reaction, user, client, config) {
     const unassignedChannels = [
         config.channels.codeUnassigned,
         config.channels.artUnassigned,
-        config.channels.audioUnassigned
+        config.channels.audioUnassigned,
+        config.channels.writingUnassigned
     ];
 
     if (isCheckmark && unassignedChannels.includes(parentId)) {
