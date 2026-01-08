@@ -77,8 +77,9 @@ async function handleClaimTicket(reaction, user, jiraTicketKey, thread, config) 
 
         // Create or update user's private task forum with description
         const guild = thread.guild;
+        const client = reaction.client;
         const taskForum = await forumService.findOrCreateUserTaskForum(
-            guild, user, config.categories.workingTickets
+            guild, user, config.categories.workingTickets, client
         );
         if (taskForum) {
             await forumService.createTaskThread(taskForum, {
