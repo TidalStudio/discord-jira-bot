@@ -39,7 +39,8 @@ const config = {
         moveTicket: '/webhook/move-ticket',
         lookupUser: '/webhook/lookup-user',
         quitTicket: '/webhook/quit-ticket',
-        getUserTasks: '/webhook/get-user-tasks'
+        getUserTasks: '/webhook/get-user-tasks',
+        syncJira: '/webhook/sync-jira'
     },
     channels: {
         codeUnassigned: process.env.CHANNEL_CODE_UNASSIGNED,

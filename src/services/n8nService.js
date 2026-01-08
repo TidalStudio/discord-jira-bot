@@ -285,6 +285,21 @@ async function getUserTasks(discordUserId, statusFilter = null) {
     });
 }
 
+/**
+ * Sync Jira tickets to Discord forum channels
+ * Creates missing threads for unassigned tickets
+ * @param {string} [category] - Optional category filter (code, art, audio, writing)
+ * @returns {Promise<Object>} { success, created, skipped, total, ...responseData }
+ */
+async function syncJira(category = null) {
+    const body = {};
+    if (category) {
+        body.category = category;
+    }
+
+    return executeRequest('POST', config.webhooks.syncJira, { body });
+}
+
 module.exports = {
     assignTicket,
     moveTicket,
@@ -293,5 +308,6 @@ module.exports = {
     lookupUser,
     lookupUserByDiscordId,
     quitTicket,
-    getUserTasks
+    getUserTasks,
+    syncJira
 };
